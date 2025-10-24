@@ -30,6 +30,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun GameScreen(
     viewModel: GameViewModel,
+    onNavigateToStats: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val gameState by viewModel.gameState.collectAsState()
@@ -144,6 +145,24 @@ fun GameScreen(
             )
         }
         
+        // Botón de estadísticas
+        OutlinedButton(
+            onClick = onNavigateToStats,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = Color(0xFF1976D2)
+            )
+        ) {
+            Text(
+                text = "📊 Ver Estadísticas",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
@@ -171,7 +190,7 @@ private fun GameInfo(
             icon = "📦"
         )
         
-        Divider(
+        HorizontalDivider(
             modifier = Modifier
                 .width(1.dp)
                 .height(40.dp),

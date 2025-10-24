@@ -22,4 +22,23 @@
     <string name="instructions_title">Instrucciones:</string>
     <string name="instructions_reveal">• Toca una celda para revelarla (+10 pts)</string>
     <string name="instructions_flag">• Mantén presionado para poner bandera (+5 pts)</string>
+    
+    <!-- Strings de estadísticas -->
+    <string name="stats_title">Estadísticas</string>
+    <string name="view_stats">Ver Estadísticas</string>
+    <string name="delete_stats">Borrar Estadísticas</string>
+    <string name="delete_stats_confirm">¿Estás seguro de que quieres borrar todas las estadísticas?</string>
+    <string name="total_games">Total de Partidas</string>
+    <string name="completed_games">Partidas Completadas</string>
+    <string name="game_overs">Game Overs</string>
+    <string name="total_draws">Empates</string>
+    <string name="completion_rate">Tasa de Finalización</string>
+    <string name="average_duration">Duración Promedio</string>
+    <string name="longest_game">Partida Más Larga</string>
+    <string name="shortest_game">Partida Más Corta</string>
+    <string name="cells_revealed">Celdas Reveladas</string>
+    <string name="flags_placed">Banderas Colocadas</string>
+    <string name="last_game">Última Partida</string>
+    <string name="winner">Ganador</string>
+    <string name="no_games">Sin partidas</string>
 </resources>

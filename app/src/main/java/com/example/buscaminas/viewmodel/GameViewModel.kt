@@ -1,12 +1,16 @@
 package com.example.buscaminas.viewmodel
 
+import android.app.Application
 import androidx.compose.ui.graphics.Color
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.buscaminas.data.repository.GameRepository
 import com.example.buscaminas.game.Board
 import com.example.buscaminas.model.GameState
+import com.example.buscaminas.model.GameStatistics
 import com.example.buscaminas.model.GameStatus
 import com.example.buscaminas.model.Player
+import com.example.buscaminas.model.PlayerStatistics
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +19,10 @@ import kotlinx.coroutines.launch
 /**
  * ViewModel que maneja la lógica del juego de Buscaminas
  */
-class GameViewModel : ViewModel() {
+class GameViewModel(application: Application) : AndroidViewModel(application) {
+    
+    // Repository para persistencia de datos
+    private val repository = GameRepository(application.applicationContext)
     
     // Configuración del juego
     private val boardRows = 10
@@ -36,6 +43,15 @@ class GameViewModel : ViewModel() {
     // Animación de la última celda revelada
     private val _lastAction = MutableStateFlow<Pair<Int, Int>?>(null)
     val lastAction: StateFlow<Pair<Int, Int>?> = _lastAction.asStateFlow()
+    
+    // Estadísticas del juego
+    private val _statistics = MutableStateFlow(GameStatistics())
+    val statistics: StateFlow<GameStatistics> = _statistics.asStateFlow()
+    
+    init {
+        // Cargar estadísticas al iniciar
+        loadStatistics()
+    }
     
     /**
      * Crea el estado inicial del juego
@@ -82,9 +98,11 @@ class GameViewModel : ViewModel() {
         if (!cell.canBeRevealed()) return
         
         viewModelScope.launch {
-            // Si es el primer movimiento, generar las minas
+            // Si es el primer movimiento, generar las minas y guardar tiempo de inicio
             if (currentState.isFirstMove) {
                 board.generateMines(row, col)
+                repository.saveGameStartTime()
+                repository.resetCurrentGameCounters()
                 _gameState.value = currentState.copy(
                     board = board.getBoard(),
                     isFirstMove = false
@@ -95,6 +113,9 @@ class GameViewModel : ViewModel() {
             val (revealedCells, hitMine) = board.revealCell(row, col)
             
             if (revealedCells.isEmpty()) return@launch
+            
+            // Guardar en SharedPreferences el número de celdas reveladas
+            repository.incrementCellsRevealed(revealedCells.size)
             
             // Actualizar el estado del tablero
             val updatedBoard = board.getBoard()
@@ -129,6 +150,9 @@ class GameViewModel : ViewModel() {
                         lastRevealedBy = currentState.currentPlayer
                     )
                 }
+                
+                // Guardar estado en SharedPreferences
+                repository.saveCurrentGameToPreferences(newState)
                 
                 // Verificar victoria
                 if (remainingCells == 0) {
@@ -169,6 +193,9 @@ class GameViewModel : ViewModel() {
             
             // Actualizar puntos si se colocó una bandera
             if (flagPlaced) {
+                // Guardar en SharedPreferences
+                repository.incrementFlagsPlaced()
+                
                 val currentPlayer = currentState.getCurrentPlayerData()
                 val updatedPlayer = currentPlayer.addPoints(pointsPerFlag)
                 
@@ -186,6 +213,9 @@ class GameViewModel : ViewModel() {
                     )
                 }
                 
+                // Guardar estado en SharedPreferences
+                repository.saveCurrentGameToPreferences(newState)
+                
                 // Cambiar de turno
                 _gameState.value = newState.switchTurn()
             } else {
@@ -202,65 +232,100 @@ class GameViewModel : ViewModel() {
      * Maneja el fin del juego cuando se toca una mina
      */
     private fun handleGameOver() {
-        val currentState = _gameState.value
-        val updatedBoard = board.getBoard()
-        
-        // El jugador contrario gana
-        val winner = currentState.getOpponentPlayerData()
-        val updatedWinner = winner.addWin()
-        
-        val gameStatus = if (currentState.currentPlayer == 1) {
-            GameStatus.PLAYER2_WON
-        } else {
-            GameStatus.PLAYER1_WON
+        viewModelScope.launch {
+            val currentState = _gameState.value
+            val updatedBoard = board.getBoard()
+            
+            // El jugador contrario gana
+            val winner = currentState.getOpponentPlayerData()
+            val updatedWinner = winner.addWin()
+            
+            val gameStatus = if (currentState.currentPlayer == 1) {
+                GameStatus.PLAYER2_WON
+            } else {
+                GameStatus.PLAYER1_WON
+            }
+            
+            val finalState = if (currentState.currentPlayer == 1) {
+                currentState.copy(
+                    board = updatedBoard,
+                    player2 = updatedWinner,
+                    gameStatus = gameStatus
+                )
+            } else {
+                currentState.copy(
+                    board = updatedBoard,
+                    player1 = updatedWinner,
+                    gameStatus = gameStatus
+                )
+            }
+            
+            _gameState.value = finalState
+            
+            // Guardar partida en la base de datos
+            saveGameToDatabase(finalState)
         }
-        
-        val finalState = if (currentState.currentPlayer == 1) {
-            currentState.copy(
-                board = updatedBoard,
-                player2 = updatedWinner,
-                gameStatus = gameStatus
-            )
-        } else {
-            currentState.copy(
-                board = updatedBoard,
-                player1 = updatedWinner,
-                gameStatus = gameStatus
-            )
-        }
-        
-        _gameState.value = finalState
     }
     
     /**
      * Maneja la victoria cuando se revelan todas las celdas seguras
      */
     private fun handleVictory(state: GameState) {
-        // Comparar puntos para determinar el ganador
-        val gameStatus = when {
-            state.player1.points > state.player2.points -> GameStatus.PLAYER1_WON
-            state.player2.points > state.player1.points -> GameStatus.PLAYER2_WON
-            else -> GameStatus.DRAW
+        viewModelScope.launch {
+            // Comparar puntos para determinar el ganador
+            val gameStatus = when {
+                state.player1.points > state.player2.points -> GameStatus.PLAYER1_WON
+                state.player2.points > state.player1.points -> GameStatus.PLAYER2_WON
+                else -> GameStatus.DRAW
+            }
+            
+            // Actualizar victorias
+            val updatedPlayer1 = if (gameStatus == GameStatus.PLAYER1_WON) {
+                state.player1.addWin()
+            } else {
+                state.player1
+            }
+            
+            val updatedPlayer2 = if (gameStatus == GameStatus.PLAYER2_WON) {
+                state.player2.addWin()
+            } else {
+                state.player2
+            }
+            
+            val finalState = state.copy(
+                player1 = updatedPlayer1,
+                player2 = updatedPlayer2,
+                gameStatus = gameStatus
+            )
+            
+            _gameState.value = finalState
+            
+            // Guardar partida en la base de datos
+            saveGameToDatabase(finalState)
         }
+    }
+    
+    /**
+     * Guarda la partida completada en la base de datos
+     */
+    private suspend fun saveGameToDatabase(finalState: GameState) {
+        val totalCellsRevealed = repository.getCurrentCellsRevealed()
+        val totalFlagsPlaced = repository.getCurrentFlagsPlaced()
         
-        // Actualizar victorias
-        val updatedPlayer1 = if (gameStatus == GameStatus.PLAYER1_WON) {
-            state.player1.addWin()
-        } else {
-            state.player1
-        }
-        
-        val updatedPlayer2 = if (gameStatus == GameStatus.PLAYER2_WON) {
-            state.player2.addWin()
-        } else {
-            state.player2
-        }
-        
-        _gameState.value = state.copy(
-            player1 = updatedPlayer1,
-            player2 = updatedPlayer2,
-            gameStatus = gameStatus
+        repository.saveGameRecord(
+            gameState = finalState,
+            totalCellsRevealed = totalCellsRevealed,
+            totalFlagsPlaced = totalFlagsPlaced,
+            boardRows = boardRows,
+            boardCols = boardCols,
+            totalMines = minesCount
         )
+        
+        // Actualizar victorias en SharedPreferences
+        repository.saveTotalWins(finalState.player1.wins, finalState.player2.wins)
+        
+        // Recargar estadísticas
+        loadStatistics()
     }
     
     /**
@@ -273,6 +338,9 @@ class GameViewModel : ViewModel() {
             // Crear nuevo tablero
             board = Board(boardRows, boardCols, minesCount)
             val initialBoard = board.initialize()
+            
+            // Resetear contadores
+            repository.resetCurrentGameCounters()
             
             // Resetear puntos pero mantener victorias
             val resetPlayer1 = currentState.player1.resetPoints()
@@ -299,5 +367,92 @@ class GameViewModel : ViewModel() {
      */
     fun clearLastAction() {
         _lastAction.value = null
+    }
+    
+    /**
+     * Carga las estadísticas desde la base de datos
+     */
+    fun loadStatistics() {
+        viewModelScope.launch {
+            try {
+                val totalGames = repository.getTotalGames()
+                val totalCompleted = repository.getTotalCompletedGames()
+                val totalGameOvers = repository.getTotalGameOvers()
+                val totalDraws = repository.getTotalDraws()
+                
+                val player1Wins = repository.getPlayer1Wins()
+                val player2Wins = repository.getPlayer2Wins()
+                
+                val avgPlayer1Points = repository.getAveragePlayer1Points()
+                val avgPlayer2Points = repository.getAveragePlayer2Points()
+                
+                val maxPlayer1Points = repository.getMaxPlayer1Points()
+                val maxPlayer2Points = repository.getMaxPlayer2Points()
+                
+                val avgDuration = repository.getAverageDuration()
+                
+                val longestGame = repository.getLongestGame()
+                val shortestGame = repository.getShortestGame()
+                
+                val totalCellsRevealed = repository.getTotalCellsRevealed()
+                val totalFlagsPlaced = repository.getTotalFlagsPlaced()
+                
+                val allGames = repository.getAllGamesList()
+                val lastGame = allGames.firstOrNull()
+                
+                // Calcular tasas de victoria
+                val player1WinRate = if (totalGames > 0) {
+                    (player1Wins.toFloat() / totalGames.toFloat()) * 100
+                } else 0f
+                
+                val player2WinRate = if (totalGames > 0) {
+                    (player2Wins.toFloat() / totalGames.toFloat()) * 100
+                } else 0f
+                
+                val stats = GameStatistics(
+                    totalGames = totalGames,
+                    totalCompletedGames = totalCompleted,
+                    totalGameOvers = totalGameOvers,
+                    totalDraws = totalDraws,
+                    player1Stats = PlayerStatistics(
+                        name = "Jugador 1",
+                        totalWins = player1Wins,
+                        averagePoints = avgPlayer1Points,
+                        maxPoints = maxPlayer1Points,
+                        winRate = player1WinRate
+                    ),
+                    player2Stats = PlayerStatistics(
+                        name = "Jugador 2",
+                        totalWins = player2Wins,
+                        averagePoints = avgPlayer2Points,
+                        maxPoints = maxPlayer2Points,
+                        winRate = player2WinRate
+                    ),
+                    averageDuration = avgDuration,
+                    longestGame = longestGame?.getFormattedDuration() ?: "00:00",
+                    shortestGame = shortestGame?.getFormattedDuration() ?: "00:00",
+                    totalCellsRevealed = totalCellsRevealed,
+                    totalFlagsPlaced = totalFlagsPlaced,
+                    lastGameDate = lastGame?.getFormattedDate() ?: "Sin partidas",
+                    lastGameWinner = lastGame?.getWinnerName() ?: "N/A"
+                )
+                
+                _statistics.value = stats
+            } catch (e: Exception) {
+                // Manejar error
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * Elimina todas las estadísticas
+     */
+    fun clearAllStatistics() {
+        viewModelScope.launch {
+            repository.deleteAllGames()
+            repository.clearPreferences()
+            loadStatistics()
+        }
     }
 }
