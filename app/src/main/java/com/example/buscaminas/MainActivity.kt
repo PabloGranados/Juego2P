@@ -13,7 +13,9 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.buscaminas.ui.screens.BluetoothSetupScreen
 import com.example.buscaminas.ui.screens.GameScreen
+import com.example.buscaminas.ui.screens.MenuScreen
 import com.example.buscaminas.ui.screens.StatsScreen
 import com.example.buscaminas.ui.theme.BuscaminasTheme
 import com.example.buscaminas.viewmodel.GameViewModel
@@ -35,18 +37,55 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     NavHost(
                         navController = navController,
-                        startDestination = "game",
+                        startDestination = "menu",
                         modifier = Modifier.padding(innerPadding)
                     ) {
-                        composable("game") {
-                            GameScreen(
-                                viewModel = gameViewModel,
-                                onNavigateToStats = {
+                        // Menú principal
+                        composable("menu") {
+                            MenuScreen(
+                                onPlayLocal = {
+                                    gameViewModel.disableBluetoothMode()
+                                    navController.navigate("game")
+                                },
+                                onPlayBluetooth = {
+                                    navController.navigate("bluetooth_setup")
+                                },
+                                onViewStats = {
                                     navController.navigate("stats")
                                 }
                             )
                         }
                         
+                        // Configuración Bluetooth
+                        composable("bluetooth_setup") {
+                            BluetoothSetupScreen(
+                                viewModel = gameViewModel,
+                                onConnectionEstablished = {
+                                    gameViewModel.enableBluetoothMode()
+                                    navController.navigate("game") {
+                                        popUpTo("menu")
+                                    }
+                                }
+                            )
+                        }
+                        
+                        // Pantalla de juego
+                        composable("game") {
+                            GameScreen(
+                                viewModel = gameViewModel,
+                                onNavigateToStats = {
+                                    navController.navigate("stats")
+                                },
+                                onNavigateBack = {
+                                    gameViewModel.disconnectBluetooth()
+                                    navController.navigate("menu") {
+                                        popUpTo("menu") { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
+                        
+                        // Estadísticas
                         composable("stats") {
                             StatsScreen(
                                 viewModel = gameViewModel,
@@ -59,5 +98,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        gameViewModel.disconnectBluetooth()
     }
 }

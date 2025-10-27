@@ -1,9 +1,14 @@
 package com.example.buscaminas.viewmodel
 
 import android.app.Application
+import android.bluetooth.BluetoothDevice
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.buscaminas.bluetooth.BluetoothManager
+import com.example.buscaminas.bluetooth.BluetoothMessage
+import com.example.buscaminas.bluetooth.ConnectionState
+import com.example.buscaminas.bluetooth.MessageType
 import com.example.buscaminas.data.repository.GameRepository
 import com.example.buscaminas.game.Board
 import com.example.buscaminas.model.GameState
@@ -23,6 +28,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     
     // Repository para persistencia de datos
     private val repository = GameRepository(application.applicationContext)
+    
+    // Bluetooth Manager
+    private val bluetoothManager = BluetoothManager(application.applicationContext)
     
     // Configuración del juego
     private val boardRows = 10
@@ -48,9 +56,26 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _statistics = MutableStateFlow(GameStatistics())
     val statistics: StateFlow<GameStatistics> = _statistics.asStateFlow()
     
+    // Estados Bluetooth
+    val connectionState: StateFlow<ConnectionState> = bluetoothManager.connectionState
+    val isHost: StateFlow<Boolean> = bluetoothManager.isHost
+    
+    private val _pairedDevices = MutableStateFlow<List<BluetoothDevice>>(emptyList())
+    val pairedDevices: StateFlow<List<BluetoothDevice>> = _pairedDevices.asStateFlow()
+    
+    private val _isBluetoothMode = MutableStateFlow(false)
+    val isBluetoothMode: StateFlow<Boolean> = _isBluetoothMode.asStateFlow()
+    
     init {
         // Cargar estadísticas al iniciar
         loadStatistics()
+        
+        // Observar mensajes Bluetooth
+        viewModelScope.launch {
+            bluetoothManager.receivedMessage.collect { message ->
+                message?.let { handleBluetoothMessage(it) }
+            }
+        }
     }
     
     /**
@@ -93,9 +118,25 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         // Verificar que el juego esté activo
         if (currentState.isGameOver()) return
         
+        // En modo Bluetooth, verificar que sea el turno del jugador local
+        if (_isBluetoothMode.value) {
+            val isMyTurn = (bluetoothManager.isHost.value && currentState.currentPlayer == 1) ||
+                          (!bluetoothManager.isHost.value && currentState.currentPlayer == 2)
+            if (!isMyTurn) return
+        }
+        
         // Verificar que la celda pueda ser revelada
         val cell = currentState.board[row][col]
         if (!cell.canBeRevealed()) return
+        
+        // Enviar mensaje Bluetooth si está en modo multijugador
+        if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
+            viewModelScope.launch {
+                bluetoothManager.sendMessage(
+                    BluetoothMessage(MessageType.CELL_CLICK, "$row,$col")
+                )
+            }
+        }
         
         viewModelScope.launch {
             // Si es el primer movimiento, generar las minas y guardar tiempo de inicio
@@ -175,9 +216,25 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (currentState.isGameOver()) return
         if (currentState.isFirstMove) return
         
+        // En modo Bluetooth, verificar que sea el turno del jugador local
+        if (_isBluetoothMode.value) {
+            val isMyTurn = (bluetoothManager.isHost.value && currentState.currentPlayer == 1) ||
+                          (!bluetoothManager.isHost.value && currentState.currentPlayer == 2)
+            if (!isMyTurn) return
+        }
+        
         // Verificar que la celda pueda tener bandera
         val cell = currentState.board[row][col]
         if (!cell.canBeFlagged()) return
+        
+        // Enviar mensaje Bluetooth si está en modo multijugador
+        if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
+            viewModelScope.launch {
+                bluetoothManager.sendMessage(
+                    BluetoothMessage(MessageType.CELL_LONG_CLICK, "$row,$col")
+                )
+            }
+        }
         
         viewModelScope.launch {
             // Alternar bandera
@@ -454,5 +511,247 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             repository.clearPreferences()
             loadStatistics()
         }
+    }
+    
+    // ==================== MÉTODOS BLUETOOTH ====================
+    
+    /**
+     * Verifica si Bluetooth está disponible
+     */
+    fun isBluetoothAvailable(): Boolean {
+        return bluetoothManager.isBluetoothAvailable()
+    }
+    
+    /**
+     * Verifica si Bluetooth está habilitado
+     */
+    fun isBluetoothEnabled(): Boolean {
+        return bluetoothManager.isBluetoothEnabled()
+    }
+    
+    /**
+     * Verifica permisos Bluetooth
+     */
+    fun hasBluetoothPermissions(): Boolean {
+        return bluetoothManager.hasBluetoothPermissions()
+    }
+    
+    /**
+     * Obtiene dispositivos vinculados
+     */
+    fun refreshPairedDevices() {
+        _pairedDevices.value = bluetoothManager.getPairedDevices()
+    }
+    
+    /**
+     * Inicia el servidor Bluetooth (anfitrión)
+     */
+    fun startBluetoothServer() {
+        _isBluetoothMode.value = true
+        viewModelScope.launch {
+            bluetoothManager.startServer()
+        }
+    }
+    
+    /**
+     * Conecta a un dispositivo Bluetooth (invitado)
+     */
+    fun connectToDevice(device: BluetoothDevice) {
+        _isBluetoothMode.value = true
+        viewModelScope.launch {
+            bluetoothManager.connectToDevice(device)
+        }
+    }
+    
+    /**
+     * Desconecta Bluetooth
+     */
+    fun disconnectBluetooth() {
+        bluetoothManager.disconnect()
+        _isBluetoothMode.value = false
+    }
+    
+    /**
+     * Maneja mensajes recibidos por Bluetooth
+     */
+    private fun handleBluetoothMessage(message: BluetoothMessage) {
+        viewModelScope.launch {
+            when (message.type) {
+                MessageType.CELL_CLICK -> {
+                    val coords = message.data.split(",")
+                    if (coords.size == 2) {
+                        val row = coords[0].toIntOrNull()
+                        val col = coords[1].toIntOrNull()
+                        if (row != null && col != null) {
+                            // Procesar el clic de celda del oponente
+                            processCellClick(row, col)
+                        }
+                    }
+                }
+                MessageType.CELL_LONG_CLICK -> {
+                    val coords = message.data.split(",")
+                    if (coords.size == 2) {
+                        val row = coords[0].toIntOrNull()
+                        val col = coords[1].toIntOrNull()
+                        if (row != null && col != null) {
+                            // Procesar el clic largo de celda del oponente
+                            processCellLongClick(row, col)
+                        }
+                    }
+                }
+                MessageType.RESET_GAME -> {
+                    resetGame()
+                }
+                MessageType.GAME_STATE -> {
+                    // Sincronizar estado completo del juego si es necesario
+                    // (opcional, para casos de desincronización)
+                }
+                MessageType.PLAYER_INFO -> {
+                    // Actualizar información del jugador si es necesario
+                }
+            }
+            bluetoothManager.clearReceivedMessage()
+        }
+    }
+    
+    /**
+     * Procesa un clic de celda (tanto local como remoto)
+     */
+    private suspend fun processCellClick(row: Int, col: Int) {
+        val currentState = _gameState.value
+        
+        if (currentState.isGameOver()) return
+        
+        val cell = currentState.board[row][col]
+        if (!cell.canBeRevealed()) return
+        
+        if (currentState.isFirstMove) {
+            board.generateMines(row, col)
+            repository.saveGameStartTime()
+            repository.resetCurrentGameCounters()
+            _gameState.value = currentState.copy(
+                board = board.getBoard(),
+                isFirstMove = false
+            )
+        }
+        
+        val (revealedCells, hitMine) = board.revealCell(row, col)
+        
+        if (revealedCells.isEmpty()) return
+        
+        repository.incrementCellsRevealed(revealedCells.size)
+        
+        val updatedBoard = board.getBoard()
+        val remainingCells = board.countRemainingCells()
+        
+        _lastAction.value = row to col
+        
+        if (hitMine) {
+            board.revealAllMines()
+            handleGameOver()
+        } else {
+            val earnedPoints = revealedCells.size * pointsPerCell
+            val currentPlayer = currentState.getCurrentPlayerData()
+            val updatedPlayer = currentPlayer.addPoints(earnedPoints)
+            
+            val newState = if (currentState.currentPlayer == 1) {
+                currentState.copy(
+                    board = updatedBoard,
+                    player1 = updatedPlayer,
+                    remainingCells = remainingCells,
+                    lastRevealedBy = currentState.currentPlayer
+                )
+            } else {
+                currentState.copy(
+                    board = updatedBoard,
+                    player2 = updatedPlayer,
+                    remainingCells = remainingCells,
+                    lastRevealedBy = currentState.currentPlayer
+                )
+            }
+            
+            repository.saveCurrentGameToPreferences(newState)
+            
+            if (remainingCells == 0) {
+                handleVictory(newState)
+            } else {
+                _gameState.value = newState.switchTurn()
+            }
+        }
+    }
+    
+    /**
+     * Procesa un clic largo de celda (tanto local como remoto)
+     */
+    private suspend fun processCellLongClick(row: Int, col: Int) {
+        val currentState = _gameState.value
+        
+        if (currentState.isGameOver()) return
+        if (currentState.isFirstMove) return
+        
+        val cell = currentState.board[row][col]
+        if (!cell.canBeFlagged()) return
+        
+        val flagPlaced = board.toggleFlag(row, col)
+        
+        if (flagPlaced == null) return
+        
+        val updatedBoard = board.getBoard()
+        val placedFlags = board.countPlacedFlags()
+        
+        _lastAction.value = row to col
+        
+        if (flagPlaced) {
+            repository.incrementFlagsPlaced()
+            
+            val currentPlayer = currentState.getCurrentPlayerData()
+            val updatedPlayer = currentPlayer.addPoints(pointsPerFlag)
+            
+            val newState = if (currentState.currentPlayer == 1) {
+                currentState.copy(
+                    board = updatedBoard,
+                    player1 = updatedPlayer,
+                    placedFlags = placedFlags
+                )
+            } else {
+                currentState.copy(
+                    board = updatedBoard,
+                    player2 = updatedPlayer,
+                    placedFlags = placedFlags
+                )
+            }
+            
+            repository.saveCurrentGameToPreferences(newState)
+            
+            _gameState.value = newState.switchTurn()
+        } else {
+            _gameState.value = currentState.copy(
+                board = updatedBoard,
+                placedFlags = placedFlags
+            )
+        }
+    }
+    
+    /**
+     * Activa el modo Bluetooth
+     */
+    fun enableBluetoothMode() {
+        _isBluetoothMode.value = true
+    }
+    
+    /**
+     * Desactiva el modo Bluetooth
+     */
+    fun disableBluetoothMode() {
+        _isBluetoothMode.value = false
+        disconnectBluetooth()
+    }
+    
+    /**
+     * Limpia recursos al destruir el ViewModel
+     */
+    override fun onCleared() {
+        super.onCleared()
+        bluetoothManager.disconnect()
     }
 }

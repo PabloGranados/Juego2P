@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,14 +29,19 @@ import kotlinx.coroutines.delay
 /**
  * Pantalla principal del juego de Buscaminas
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GameScreen(
     viewModel: GameViewModel,
     onNavigateToStats: () -> Unit,
+    onNavigateBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val gameState by viewModel.gameState.collectAsState()
     val lastAction by viewModel.lastAction.collectAsState()
+    val isBluetoothMode by viewModel.isBluetoothMode.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val isHost by viewModel.isHost.collectAsState()
     
     // Limpiar la animación después de un tiempo
     LaunchedEffect(lastAction) {
@@ -54,11 +61,40 @@ fun GameScreen(
         )
     }
     
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
-            .padding(16.dp)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { 
+                    Text(
+                        text = if (isBluetoothMode) {
+                            "Buscaminas - Bluetooth ${if (isHost) "(Anfitrión)" else "(Invitado)"}"
+                        } else {
+                            "Buscaminas - Local"
+                        }
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Volver"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF2196F3),
+                    titleContentColor = Color.White,
+                    navigationIconContentColor = Color.White
+                )
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color(0xFFF5F5F5))
+                .padding(paddingValues)
+                .padding(16.dp)
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -164,6 +200,7 @@ fun GameScreen(
         }
         
         Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }
 

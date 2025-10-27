@@ -1,11 +1,18 @@
 # 💣 Buscaminas Multijugador - Android
 
-Una implementación moderna del clásico juego Buscaminas para **dos jugadores**, desarrollada con Jetpack Compose y siguiendo la arquitectura MVVM.
+Una implementación moderna del clásico juego Buscaminas para **dos jugadores**, desarrollada con Jetpack Compose y siguiendo la arquitectura MVVM. Ahora con **soporte Bluetooth** para jugar en dos dispositivos diferentes.
 
 ## 📱 Características Principales
 
+### Modos de Juego
+- ✅ **Modo Local**: Dos jugadores en el mismo dispositivo (original)
+- ✅ **Modo Bluetooth** ⭐ NUEVO: Juego multidispositivo mediante conexión Bluetooth
+  - Conexión servidor/cliente
+  - Sincronización en tiempo real
+  - Validación de turnos por dispositivo
+
 ### Sistema de Juego
-- ✅ **Modo dos jugadores**: Alternancia de turnos entre dos jugadores
+- ✅ **Alternancia de turnos**: Entre dos jugadores
 - ✅ **Sistema de puntuación**: 
   - +10 puntos por cada celda revelada
   - +5 puntos por cada bandera colocada
@@ -40,6 +47,38 @@ Una implementación moderna del clásico juego Buscaminas para **dos jugadores**
 
 ## 🎮 Cómo Jugar
 
+### Modos de Juego
+
+#### 🏠 Modo Local
+Dos jugadores comparten el mismo dispositivo:
+1. Desde el menú principal, selecciona **"Juego Local"**
+2. Los jugadores se alternan en el mismo dispositivo
+3. ¡Empieza a jugar!
+
+#### 📱 Modo Bluetooth (NUEVO)
+Juega con un amigo en dispositivos separados:
+
+**Preparación:**
+1. Vincula ambos dispositivos desde **Configuración → Bluetooth** de Android
+2. Abre la app en ambos dispositivos
+
+**Dispositivo 1 (Anfitrión):**
+1. Selecciona **"Juego Bluetooth"**
+2. Presiona **"Crear partida (Anfitrión)"**
+3. Espera a que el otro jugador se conecte
+4. Serás el **Jugador 1** (Azul)
+
+**Dispositivo 2 (Invitado):**
+1. Selecciona **"Juego Bluetooth"**
+2. Elige el dispositivo anfitrión de la lista
+3. Espera la conexión
+4. Serás el **Jugador 2** (Rojo)
+
+**Durante el juego:**
+- Solo puedes jugar durante tu turno
+- Los movimientos se sincronizan automáticamente
+- Mantén los dispositivos a menos de 10 metros
+
 ### Reglas Básicas
 1. **Primer movimiento**: El primer clic siempre es seguro y genera el tablero
 2. **Revelar celdas**: Toca una celda para revelarla
@@ -66,26 +105,33 @@ Una implementación moderna del clásico juego Buscaminas para **dos jugadores**
 
 ```
 app/src/main/java/com/example/buscaminas/
+├── bluetooth/                    # ⭐ NUEVO: Sistema Bluetooth
+│   └── BluetoothManager.kt      # Gestión de conexión y mensajes
 ├── model/
-│   ├── Cell.kt              # Modelo de celda del tablero
-│   ├── Player.kt            # Modelo de jugador
-│   └── GameState.kt         # Estado completo del juego
+│   ├── Cell.kt                  # Modelo de celda del tablero
+│   ├── Player.kt                # Modelo de jugador
+│   └── GameState.kt             # Estado completo del juego
 ├── game/
-│   └── Board.kt             # Lógica del tablero (minas, flood fill)
+│   └── Board.kt                 # Lógica del tablero (minas, flood fill)
 ├── viewmodel/
-│   └── GameViewModel.kt     # ViewModel con lógica de negocio
+│   └── GameViewModel.kt         # ViewModel con lógica de negocio + Bluetooth
 ├── ui/
 │   ├── components/
-│   │   ├── CellView.kt      # Componente de celda individual
-│   │   ├── PlayerInfo.kt    # Información del jugador
-│   │   └── GameBoard.kt     # Tablero completo
+│   │   ├── CellView.kt          # Componente de celda individual
+│   │   ├── PlayerInfo.kt        # Información del jugador
+│   │   └── GameBoard.kt         # Tablero completo
 │   ├── screens/
-│   │   └── GameScreen.kt    # Pantalla principal del juego
+│   │   ├── MenuScreen.kt        # ⭐ NUEVO: Menú principal
+│   │   ├── BluetoothSetupScreen.kt  # ⭐ NUEVO: Configuración Bluetooth
+│   │   ├── GameScreen.kt        # Pantalla principal del juego
+│   │   └── StatsScreen.kt       # Estadísticas del juego
 │   └── theme/
 │       ├── Color.kt
 │       ├── Theme.kt
 │       └── Type.kt
-└── MainActivity.kt          # Actividad principal
+├── data/                         # Persistencia de datos
+│   └── repository/
+└── MainActivity.kt               # Actividad principal con navegación
 ```
 
 ## 🔧 Configuración del Tablero
@@ -109,6 +155,9 @@ private val pointsPerFlag = 5   // Puntos por bandera colocada
 - **StateFlow**: Manejo de estado reactivo
 - **Coroutines**: Programación asíncrona
 - **ViewModel**: Arquitectura MVVM
+- **Bluetooth Classic (RFCOMM)**: ⭐ Comunicación entre dispositivos
+- **Room Database**: Persistencia de estadísticas
+- **Navigation Compose**: Navegación entre pantallas
 - **Android Studio**: IDE de desarrollo
 
 ## 📋 Requisitos
@@ -117,6 +166,20 @@ private val pointsPerFlag = 5   // Puntos por bandera colocada
 - Kotlin 1.9+
 - Android SDK 24+ (Android 7.0)
 - Gradle 8.0+
+- **Bluetooth habilitado** (para modo multijugador)
+- **Dos dispositivos Android** (para modo Bluetooth)
+
+## 🔐 Permisos Requeridos
+
+La aplicación solicita los siguientes permisos:
+
+**Para modo Bluetooth:**
+- `BLUETOOTH_SCAN` - Buscar dispositivos
+- `BLUETOOTH_CONNECT` - Conectar dispositivos
+- `BLUETOOTH_ADVERTISE` - Hacerse visible
+- `ACCESS_FINE_LOCATION` - Requerido por Android para Bluetooth
+
+**Nota:** Estos permisos solo se solicitan cuando seleccionas el modo Bluetooth.
 
 ## 🎯 Características Implementadas
 
@@ -152,6 +215,14 @@ private val pointsPerFlag = 5   // Puntos por bandera colocada
 - Feedback visual inmediato
 - Diálogos informativos
 
+### Modo Bluetooth Multidispositivo ✅ (NUEVO)
+- Conexión servidor/cliente
+- Sincronización automática de movimientos
+- Validación de turnos
+- Indicadores de conexión
+- Manejo robusto de errores
+- Soporte para desconexión y reconexión
+
 ## 🎨 Paleta de Colores
 
 | Elemento | Color | Código |
@@ -175,13 +246,22 @@ El juego maneja correctamente:
 ## 📝 Notas de Desarrollo
 
 ### Inspiración
-Este proyecto se inspiró en una implementación de Buscaminas multijugador en Python con arquitectura cliente-servidor, adaptándola para un contexto local de dos jugadores en dispositivos Android.
+Este proyecto se inspiró en una implementación de Buscaminas multijugador en Python con arquitectura cliente-servidor, evolucionando para soportar tanto modo local como conexión Bluetooth entre dispositivos Android.
 
-### Diferencias con la versión Python
-- **Local vs Red**: Versión local sin necesidad de servidor
-- **Dos jugadores fijos**: No hay sala de espera ni conexión múltiple
-- **Interfaz gráfica nativa**: UI moderna con Compose vs terminal
-- **Puntuación competitiva**: Sistema de puntos para determinar ganador
+### Evolución del Proyecto
+- **Versión 1.0**: Modo local de dos jugadores en un dispositivo
+- **Versión 2.0**: ⭐ Agregado modo Bluetooth multidispositivo con:
+  - Sistema completo de comunicación Bluetooth
+  - Sincronización en tiempo real
+  - Menú de selección de modo
+  - Validación de turnos por dispositivo
+
+### Características Bluetooth
+- **Protocolo**: Bluetooth Classic (RFCOMM)
+- **Arquitectura**: Cliente-Servidor
+- **Mensajes**: Formato estructurado con delimitadores
+- **Estados**: Desconectado, Escuchando, Conectando, Conectado
+- **Sincronización**: Bidireccional en tiempo real
 
 ## 🎓 Conceptos Aplicados
 
@@ -192,6 +272,28 @@ Este proyecto se inspiró en una implementación de Buscaminas multijugador en P
 - **Clean Code**: Código legible y mantenible
 - **Animaciones**: Transiciones y feedback visual
 - **Flood Fill**: Algoritmo para revelar celdas vacías
+- **Bluetooth Classic (RFCOMM)**: Comunicación entre dispositivos
+- **Protocolo de Mensajes**: Sincronización cliente-servidor
+- **Manejo de Permisos**: Runtime permissions para Android 12+
+
+## 🔍 Solución de Problemas
+
+### Bluetooth no se conecta
+- ✅ Verifica que ambos dispositivos tienen Bluetooth activado
+- ✅ Asegúrate de que los dispositivos estén emparejados previamente
+- ✅ Revisa que los permisos estén otorgados en ambos dispositivos
+- ✅ Intenta reiniciar la aplicación
+- ✅ Verifica que no haya otras apps usando Bluetooth
+
+### El otro jugador no ve mis movimientos
+- ✅ Verifica que ambos dispositivos muestren "Conectado"
+- ✅ Asegúrate de que estás jugando en tu turno correcto
+- ✅ Intenta desconectar y volver a conectar
+
+### Errores de permisos
+- ✅ Ve a **Configuración → Aplicaciones → Buscaminas → Permisos**
+- ✅ Otorga permisos de Ubicación y Dispositivos cercanos (Bluetooth)
+- ✅ Reinicia la aplicación
 
 ## 📄 Licencia
 
