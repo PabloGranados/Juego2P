@@ -22,6 +22,11 @@ data class Player(
     fun addPoints(newPoints: Int): Player = copy(points = points + newPoints)
     
     /**
+     * Resta puntos al jugador (no puede tener puntos negativos)
+     */
+    fun subtractPoints(penalty: Int): Player = copy(points = maxOf(0, points - penalty))
+    
+    /**
      * Crea una copia del jugador con victorias actualizadas
      */
     fun addWin(): Player = copy(wins = wins + 1)

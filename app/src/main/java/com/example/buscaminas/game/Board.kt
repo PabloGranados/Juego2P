@@ -31,12 +31,52 @@ class Board(
     }
     
     /**
+     * Restaura el estado del tablero desde una lista de celdas guardada
+     */
+    fun restoreBoard(savedBoard: List<List<Cell>>): List<List<Cell>> {
+        if (savedBoard.size != rows || savedBoard.getOrNull(0)?.size != cols) {
+            // Si el tamaño no coincide, inicializar nuevo tablero
+            return initialize()
+        }
+        
+        board = savedBoard.map { row ->
+            row.map { cell -> cell.copy() }.toMutableList()
+        }.toMutableList()
+        
+        return board.map { it.toList() }
+    }
+    
+    /**
+     * Restaura el tablero desde un estado guardado (alias de restoreBoard)
+     */
+    fun restoreFromState(savedBoard: List<List<Cell>>): List<List<Cell>> {
+        return restoreBoard(savedBoard)
+    }
+    
+    /**
      * Genera las minas en el tablero, evitando la posición del primer clic
      *
      * @param firstClickRow Fila del primer clic
      * @param firstClickCol Columna del primer clic
      */
     fun generateMines(firstClickRow: Int, firstClickCol: Int) {
+        // IMPORTANTE: Limpiar todas las minas existentes antes de generar nuevas
+        // Esto previene que se acumulen minas en llamadas múltiples
+        var previousMineCount = 0
+        for (row in 0 until rows) {
+            for (col in 0 until cols) {
+                if (board[row][col].isMine) {
+                    previousMineCount++
+                    board[row][col] = board[row][col].copy(isMine = false, adjacentMines = 0)
+                }
+            }
+        }
+        
+        // Log para debugging (puedes comentar esto en producción)
+        if (previousMineCount > 0) {
+            println("⚠️ ADVERTENCIA: Se encontraron $previousMineCount minas existentes que fueron limpiadas")
+        }
+        
         val availablePositions = mutableListOf<Pair<Int, Int>>()
         
         // Recolectar todas las posiciones disponibles excepto el primer clic y sus adyacentes
@@ -53,6 +93,8 @@ class Board(
         for ((row, col) in selectedPositions) {
             board[row][col] = board[row][col].copy(isMine = true)
         }
+        
+        println("✅ Generadas exactamente $minesCount minas en posiciones aleatorias")
         
         // Calcular números adyacentes
         calculateAdjacentMines()

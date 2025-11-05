@@ -37,14 +37,14 @@ fun PlayerInfo(
                 color = borderColor,
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(12.dp),
+            .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         // Nombre del jugador
         Text(
             text = player.name,
-            fontSize = 16.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             color = player.color
         )
@@ -53,13 +53,13 @@ fun PlayerInfo(
         if (isCurrentPlayer) {
             Text(
                 text = "🎯 Tu turno",
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 color = Color(0xFF4CAF50),
                 fontWeight = FontWeight.SemiBold
             )
         }
         
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(2.dp))
         
         // Puntos actuales
         Row(
@@ -68,12 +68,12 @@ fun PlayerInfo(
         ) {
             Text(
                 text = "Puntos:",
-                fontSize = 14.sp,
+                fontSize = 12.sp,
                 color = Color.Gray
             )
             Text(
                 text = "${player.points}",
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = player.color
             )
@@ -86,12 +86,12 @@ fun PlayerInfo(
         ) {
             Text(
                 text = "Victorias:",
-                fontSize = 14.sp,
+                fontSize = 12.sp,
                 color = Color.Gray
             )
             Text(
                 text = "${player.wins}",
-                fontSize = 16.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.Black
             )

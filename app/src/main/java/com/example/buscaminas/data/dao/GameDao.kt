@@ -67,31 +67,31 @@ interface GameDao {
     /**
      * Obtiene el promedio de puntos del Jugador 1
      */
-    @Query("SELECT AVG(player1Points) FROM game_records")
+    @Query("SELECT COALESCE(AVG(player1Points), 0) FROM game_records")
     suspend fun getAveragePlayer1Points(): Double
     
     /**
      * Obtiene el promedio de puntos del Jugador 2
      */
-    @Query("SELECT AVG(player2Points) FROM game_records")
+    @Query("SELECT COALESCE(AVG(player2Points), 0) FROM game_records")
     suspend fun getAveragePlayer2Points(): Double
     
     /**
      * Obtiene la puntuación máxima del Jugador 1
      */
-    @Query("SELECT MAX(player1Points) FROM game_records")
+    @Query("SELECT COALESCE(MAX(player1Points), 0) FROM game_records")
     suspend fun getMaxPlayer1Points(): Int
     
     /**
      * Obtiene la puntuación máxima del Jugador 2
      */
-    @Query("SELECT MAX(player2Points) FROM game_records")
+    @Query("SELECT COALESCE(MAX(player2Points), 0) FROM game_records")
     suspend fun getMaxPlayer2Points(): Int
     
     /**
      * Obtiene el promedio de duración de partidas
      */
-    @Query("SELECT AVG(duration) FROM game_records")
+    @Query("SELECT COALESCE(AVG(duration), 0) FROM game_records")
     suspend fun getAverageDuration(): Double
     
     /**
@@ -101,21 +101,21 @@ interface GameDao {
     suspend fun getLongestGame(): GameRecord?
     
     /**
-     * Obtiene la partida con menor duración
+     * Obtiene la partida con menor duración (excluyendo duraciones de 0)
      */
-    @Query("SELECT * FROM game_records ORDER BY duration ASC LIMIT 1")
+    @Query("SELECT * FROM game_records WHERE duration > 0 ORDER BY duration ASC LIMIT 1")
     suspend fun getShortestGame(): GameRecord?
     
     /**
      * Obtiene el total de celdas reveladas en todas las partidas
      */
-    @Query("SELECT SUM(totalCellsRevealed) FROM game_records")
+    @Query("SELECT COALESCE(SUM(totalCellsRevealed), 0) FROM game_records")
     suspend fun getTotalCellsRevealed(): Int
     
     /**
      * Obtiene el total de banderas colocadas en todas las partidas
      */
-    @Query("SELECT SUM(totalFlagsPlaced) FROM game_records")
+    @Query("SELECT COALESCE(SUM(totalFlagsPlaced), 0) FROM game_records")
     suspend fun getTotalFlagsPlaced(): Int
     
     /**

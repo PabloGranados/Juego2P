@@ -20,14 +20,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 
 /**
  * ViewModel que maneja la lógica del juego de Buscaminas
  */
 class GameViewModel(application: Application) : AndroidViewModel(application) {
     
-    // Repository para persistencia de datos
-    private val repository = GameRepository(application.applicationContext)
+    // Repository para persistencia de datos (público para acceso desde UI)
+    val repository = GameRepository(application.applicationContext)
     
     // Bluetooth Manager
     private val bluetoothManager = BluetoothManager(application.applicationContext)
@@ -40,6 +42,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // Puntos por acción
     private val pointsPerCell = 10
     private val pointsPerFlag = 5
+    private val penaltyPerMine = 30 // Penalización por pisar una mina
     
     // Instancia del tablero
     private var board = Board(boardRows, boardCols, minesCount)
@@ -51,6 +54,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // Animación de la última celda revelada
     private val _lastAction = MutableStateFlow<Pair<Int, Int>?>(null)
     val lastAction: StateFlow<Pair<Int, Int>?> = _lastAction.asStateFlow()
+    
+    // Tiempo transcurrido en segundos
+    private val _elapsedTime = MutableStateFlow(0L)
+    val elapsedTime: StateFlow<Long> = _elapsedTime.asStateFlow()
+    
+    // Job para controlar el timer
+    private var timerJob: Job? = null
     
     // Estadísticas del juego
     private val _statistics = MutableStateFlow(GameStatistics())
@@ -67,6 +77,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val isBluetoothMode: StateFlow<Boolean> = _isBluetoothMode.asStateFlow()
     
     init {
+        // Intentar cargar partida guardada
+        loadSavedGame()
+        
         // Cargar estadísticas al iniciar
         loadStatistics()
         
@@ -75,6 +88,31 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             bluetoothManager.receivedMessage.collect { message ->
                 message?.let { handleBluetoothMessage(it) }
             }
+        }
+    }
+    
+    /**
+     * Intenta cargar una partida guardada desde SharedPreferences
+     */
+    private fun loadSavedGame() {
+        val savedData = repository.loadGameState()
+        
+        if (savedData != null) {
+            val (gameState, boardData) = savedData
+            
+            // Restaurar el tablero con las posiciones de las minas
+            board.restoreBoard(boardData)
+            
+            // Restaurar el estado del juego
+            _gameState.value = gameState
+            
+            // Si el juego está activo y no es el primer movimiento, iniciar el temporizador
+            if (!gameState.isGameOver() && !gameState.isFirstMove) {
+                startTimer()
+            }
+        } else {
+            // No hay partida guardada, crear una nueva
+            _gameState.value = createInitialGameState()
         }
     }
     
@@ -139,18 +177,37 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         viewModelScope.launch {
+            // Obtener el estado actual al inicio de la coroutine
+            var workingState = _gameState.value
+            
             // Si es el primer movimiento, generar las minas y guardar tiempo de inicio
-            if (currentState.isFirstMove) {
+            if (workingState.isFirstMove) {
+                // Generar minas (la función ya limpia las minas existentes)
                 board.generateMines(row, col)
+                
+                // Guardar tiempo de inicio y resetear contadores
                 repository.saveGameStartTime()
                 repository.resetCurrentGameCounters()
-                _gameState.value = currentState.copy(
+                
+                // Actualizar el estado marcando que ya no es el primer movimiento
+                val updatedState = workingState.copy(
                     board = board.getBoard(),
                     isFirstMove = false
                 )
+                _gameState.value = updatedState
+                workingState = updatedState  // IMPORTANTE: actualizar la variable de trabajo
+                
+                // Guardar el estado con las minas generadas
+                repository.saveCurrentGameToPreferences(updatedState)
+                
+                // Iniciar el temporizador
+                startTimer()
+                
+                // Pequeña pausa para asegurar que todo esté sincronizado
+                delay(50)
             }
             
-            // Revelar la celda
+            // Revelar la celda usando el estado actualizado
             val (revealedCells, hitMine) = board.revealCell(row, col)
             
             if (revealedCells.isEmpty()) return@launch
@@ -166,29 +223,57 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _lastAction.value = row to col
             
             if (hitMine) {
-                // El jugador perdió - revelar todas las minas
-                board.revealAllMines()
-                handleGameOver()
+                // MECÁNICA MEJORADA PARA 2 JUGADORES:
+                // En lugar de terminar el juego, el jugador pierde puntos y pierde su turno
+                val currentPlayer = workingState.getCurrentPlayerData()
+                val penalizedPlayer = currentPlayer.subtractPoints(penaltyPerMine)
+                
+                val newState = if (workingState.currentPlayer == 1) {
+                    workingState.copy(
+                        board = updatedBoard,
+                        player1 = penalizedPlayer,
+                        remainingCells = remainingCells,
+                        lastRevealedBy = workingState.currentPlayer
+                    )
+                } else {
+                    workingState.copy(
+                        board = updatedBoard,
+                        player2 = penalizedPlayer,
+                        remainingCells = remainingCells,
+                        lastRevealedBy = workingState.currentPlayer
+                    )
+                }
+                
+                // Guardar estado
+                repository.saveCurrentGameToPreferences(newState)
+                
+                // Verificar si se revelaron todas las celdas seguras (victoria)
+                if (remainingCells == 0) {
+                    handleVictory(newState)
+                } else {
+                    // Cambiar de turno después de pisar una mina
+                    _gameState.value = newState.switchTurn()
+                }
             } else {
                 // Calcular puntos por las celdas reveladas
                 val earnedPoints = revealedCells.size * pointsPerCell
-                val currentPlayer = currentState.getCurrentPlayerData()
+                val currentPlayer = workingState.getCurrentPlayerData()
                 val updatedPlayer = currentPlayer.addPoints(earnedPoints)
                 
                 // Actualizar el estado
-                val newState = if (currentState.currentPlayer == 1) {
-                    currentState.copy(
+                val newState = if (workingState.currentPlayer == 1) {
+                    workingState.copy(
                         board = updatedBoard,
                         player1 = updatedPlayer,
                         remainingCells = remainingCells,
-                        lastRevealedBy = currentState.currentPlayer
+                        lastRevealedBy = workingState.currentPlayer
                     )
                 } else {
-                    currentState.copy(
+                    workingState.copy(
                         board = updatedBoard,
                         player2 = updatedPlayer,
                         remainingCells = remainingCells,
-                        lastRevealedBy = currentState.currentPlayer
+                        lastRevealedBy = workingState.currentPlayer
                     )
                 }
                 
@@ -214,7 +299,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         
         // Verificar que el juego esté activo
         if (currentState.isGameOver()) return
-        if (currentState.isFirstMove) return
         
         // En modo Bluetooth, verificar que sea el turno del jugador local
         if (_isBluetoothMode.value) {
@@ -273,10 +357,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 // Guardar estado en SharedPreferences
                 repository.saveCurrentGameToPreferences(newState)
                 
-                // Cambiar de turno
+                // Cambiar de turno después de colocar una bandera
                 _gameState.value = newState.switchTurn()
             } else {
-                // Solo actualizar el tablero si se quitó una bandera (sin cambiar turno)
+                // Decrementar el contador cuando se quita una bandera
+                repository.decrementFlagsPlaced()
+                
+                // Solo actualizar el tablero si se quitó una bandera (sin cambiar turno ni puntos)
                 _gameState.value = currentState.copy(
                     board = updatedBoard,
                     placedFlags = placedFlags
@@ -290,6 +377,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun handleGameOver() {
         viewModelScope.launch {
+            // Detener el temporizador
+            stopTimer()
+            
             val currentState = _gameState.value
             val updatedBoard = board.getBoard()
             
@@ -329,6 +419,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun handleVictory(state: GameState) {
         viewModelScope.launch {
+            // Detener el temporizador
+            stopTimer()
+            
             // Comparar puntos para determinar el ganador
             val gameStatus = when {
                 state.player1.points > state.player2.points -> GameStatus.PLAYER1_WON
@@ -390,6 +483,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun resetGame() {
         viewModelScope.launch {
+            // Resetear el temporizador
+            resetTimer()
+            
             val currentState = _gameState.value
             
             // Crear nuevo tablero
@@ -403,7 +499,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             val resetPlayer1 = currentState.player1.resetPoints()
             val resetPlayer2 = currentState.player2.resetPoints()
             
-            _gameState.value = GameState(
+            val newState = GameState(
                 board = initialBoard,
                 player1 = resetPlayer1,
                 player2 = resetPlayer2,
@@ -415,6 +511,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 isFirstMove = true
             )
             
+            _gameState.value = newState
+            
+            // Guardar el nuevo estado limpio
+            repository.saveCurrentGameToPreferences(newState)
+            
             _lastAction.value = null
         }
     }
@@ -424,6 +525,51 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun clearLastAction() {
         _lastAction.value = null
+    }
+    
+    /**
+     * Inicia el temporizador del juego
+     */
+    private fun startTimer() {
+        // Cancelar cualquier timer previo
+        timerJob?.cancel()
+        
+        timerJob = viewModelScope.launch {
+            // Pequeña pausa para asegurar que se haya guardado el tiempo de inicio
+            delay(100)
+            
+            val startTime = repository.getGameStartTime()
+            if (startTime <= 0) {
+                // Si no hay tiempo guardado, guardar ahora
+                repository.saveGameStartTime()
+                delay(50)
+            }
+            
+            while (true) {
+                val currentStartTime = repository.getGameStartTime()
+                if (currentStartTime > 0) {
+                    val elapsed = (System.currentTimeMillis() - currentStartTime) / 1000
+                    _elapsedTime.value = elapsed
+                }
+                delay(1000) // Actualizar cada segundo
+            }
+        }
+    }
+    
+    /**
+     * Detiene el temporizador del juego
+     */
+    private fun stopTimer() {
+        timerJob?.cancel()
+        timerJob = null
+    }
+    
+    /**
+     * Resetea el temporizador
+     */
+    private fun resetTimer() {
+        stopTimer()
+        _elapsedTime.value = 0L
     }
     
     /**
@@ -618,21 +764,30 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      * Procesa un clic de celda (tanto local como remoto)
      */
     private suspend fun processCellClick(row: Int, col: Int) {
-        val currentState = _gameState.value
+        var workingState = _gameState.value
         
-        if (currentState.isGameOver()) return
+        if (workingState.isGameOver()) return
         
-        val cell = currentState.board[row][col]
+        val cell = workingState.board[row][col]
         if (!cell.canBeRevealed()) return
         
-        if (currentState.isFirstMove) {
+        if (workingState.isFirstMove) {
             board.generateMines(row, col)
             repository.saveGameStartTime()
             repository.resetCurrentGameCounters()
-            _gameState.value = currentState.copy(
+            
+            val updatedState = workingState.copy(
                 board = board.getBoard(),
                 isFirstMove = false
             )
+            _gameState.value = updatedState
+            workingState = updatedState  // IMPORTANTE: actualizar la variable de trabajo
+            
+            // Guardar el estado con las minas generadas
+            repository.saveCurrentGameToPreferences(updatedState)
+            
+            // Iniciar el temporizador
+            startTimer()
         }
         
         val (revealedCells, hitMine) = board.revealCell(row, col)
@@ -647,26 +802,51 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _lastAction.value = row to col
         
         if (hitMine) {
-            board.revealAllMines()
-            handleGameOver()
+            // MECÁNICA MEJORADA: Penalizar al jugador pero continuar el juego
+            val currentPlayer = workingState.getCurrentPlayerData()
+            val penalizedPlayer = currentPlayer.subtractPoints(penaltyPerMine)
+            
+            val newState = if (workingState.currentPlayer == 1) {
+                workingState.copy(
+                    board = updatedBoard,
+                    player1 = penalizedPlayer,
+                    remainingCells = remainingCells,
+                    lastRevealedBy = workingState.currentPlayer
+                )
+            } else {
+                workingState.copy(
+                    board = updatedBoard,
+                    player2 = penalizedPlayer,
+                    remainingCells = remainingCells,
+                    lastRevealedBy = workingState.currentPlayer
+                )
+            }
+            
+            repository.saveCurrentGameToPreferences(newState)
+            
+            if (remainingCells == 0) {
+                handleVictory(newState)
+            } else {
+                _gameState.value = newState.switchTurn()
+            }
         } else {
             val earnedPoints = revealedCells.size * pointsPerCell
-            val currentPlayer = currentState.getCurrentPlayerData()
+            val currentPlayer = workingState.getCurrentPlayerData()
             val updatedPlayer = currentPlayer.addPoints(earnedPoints)
             
-            val newState = if (currentState.currentPlayer == 1) {
-                currentState.copy(
+            val newState = if (workingState.currentPlayer == 1) {
+                workingState.copy(
                     board = updatedBoard,
                     player1 = updatedPlayer,
                     remainingCells = remainingCells,
-                    lastRevealedBy = currentState.currentPlayer
+                    lastRevealedBy = workingState.currentPlayer
                 )
             } else {
-                currentState.copy(
+                workingState.copy(
                     board = updatedBoard,
                     player2 = updatedPlayer,
                     remainingCells = remainingCells,
-                    lastRevealedBy = currentState.currentPlayer
+                    lastRevealedBy = workingState.currentPlayer
                 )
             }
             
@@ -687,7 +867,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val currentState = _gameState.value
         
         if (currentState.isGameOver()) return
-        if (currentState.isFirstMove) return
         
         val cell = currentState.board[row][col]
         if (!cell.canBeFlagged()) return
@@ -725,6 +904,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             
             _gameState.value = newState.switchTurn()
         } else {
+            // Decrementar el contador cuando se quita una bandera
+            repository.decrementFlagsPlaced()
+            
             _gameState.value = currentState.copy(
                 board = updatedBoard,
                 placedFlags = placedFlags
@@ -745,6 +927,85 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun disableBluetoothMode() {
         _isBluetoothMode.value = false
         disconnectBluetooth()
+    }
+    
+    /**
+     * Carga una partida guardada desde un archivo
+     */
+    fun loadSavedGame(fileName: String): Boolean {
+        return try {
+            viewModelScope.launch {
+                // Detener el temporizador actual
+                stopTimer()
+                
+                // Cargar la partida desde el archivo
+                val savedGame = repository.loadGame(fileName)
+                
+                if (savedGame != null) {
+                    val loadedState = savedGame.gameState
+                    
+                    println("🔍 DEBUG - Cargando partida:")
+                    println("  - Nombre: ${savedGame.name}")
+                    println("  - Formato: ${savedGame.format}")
+                    println("  - Jugador 1: ${loadedState.player1.name} (${loadedState.player1.points} pts)")
+                    println("  - Jugador 2: ${loadedState.player2.name} (${loadedState.player2.points} pts)")
+                    println("  - Turno: Jugador ${loadedState.currentPlayer}")
+                    println("  - Estado: ${loadedState.gameStatus}")
+                    println("  - Celdas restantes: ${loadedState.remainingCells}")
+                    println("  - Banderas: ${loadedState.placedFlags}/${loadedState.totalFlags}")
+                    
+                    // Verificar el tablero cargado
+                    var minesCount = 0
+                    var revealedCount = 0
+                    var flaggedCount = 0
+                    loadedState.board.forEach { row ->
+                        row.forEach { cell ->
+                            if (cell.isMine) minesCount++
+                            if (cell.isRevealed) revealedCount++
+                            if (cell.isFlagged) flaggedCount++
+                        }
+                    }
+                    println("  - Tablero: ${minesCount} minas, ${revealedCount} reveladas, ${flaggedCount} banderas")
+                    
+                    // Crear un nuevo tablero y restaurar el estado
+                    board = Board(boardRows, boardCols, minesCount)
+                    val restoredBoard = board.restoreFromState(loadedState.board)
+                    
+                    // IMPORTANTE: Actualizar el estado con el tablero restaurado
+                    val restoredState = loadedState.copy(board = restoredBoard)
+                    
+                    // Actualizar el estado del juego
+                    _gameState.value = restoredState
+                    
+                    // Guardar en preferencias para continuidad
+                    repository.saveCurrentGameToPreferences(restoredState)
+                    
+                    // Restaurar contadores
+                    repository.resetCurrentGameCounters()
+                    
+                    // Restaurar el tiempo de juego
+                    val startTime = System.currentTimeMillis() - (savedGame.duration * 1000)
+                    repository.saveGameStartTime(startTime)
+                    
+                    // Actualizar el tiempo transcurrido
+                    _elapsedTime.value = savedGame.duration
+                    
+                    // Reiniciar el temporizador si el juego sigue en curso
+                    if (loadedState.gameStatus == GameStatus.PLAYING) {
+                        startTimer()
+                    }
+                    
+                    println("✅ Partida cargada exitosamente: ${savedGame.name}")
+                } else {
+                    println("❌ Error: No se pudo cargar la partida $fileName")
+                }
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            println("❌ Error al cargar la partida: ${e.message}")
+            false
+        }
     }
     
     /**

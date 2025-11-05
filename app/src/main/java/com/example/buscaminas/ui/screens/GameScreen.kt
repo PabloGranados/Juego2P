@@ -9,22 +9,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.buscaminas.data.preferences.GamePreferences
 import com.example.buscaminas.model.GameStatus
+import com.example.buscaminas.model.SavedGame
 import com.example.buscaminas.ui.components.GameBoard
 import com.example.buscaminas.ui.components.PlayerInfo
+import com.example.buscaminas.utils.FileManager
 import com.example.buscaminas.viewmodel.GameViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Pantalla principal del juego de Buscaminas
@@ -42,6 +48,19 @@ fun GameScreen(
     val isBluetoothMode by viewModel.isBluetoothMode.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val isHost by viewModel.isHost.collectAsState()
+    val elapsedTime by viewModel.elapsedTime.collectAsState()
+    
+    // Contexto y coroutine scope
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val preferences = remember { GamePreferences(context) }
+    val fileFormat by preferences.fileFormat.collectAsState(initial = com.example.buscaminas.model.FileFormat.TXT)
+    
+    // Estado para el diálogo de guardar partida
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var gameName by remember { mutableStateOf("") }
+    var saveMessage by remember { mutableStateOf<String?>(null) }
+    var showSaveResult by remember { mutableStateOf(false) }
     
     // Limpiar la animación después de un tiempo
     LaunchedEffect(lastAction) {
@@ -58,6 +77,103 @@ fun GameScreen(
             player1 = gameState.player1,
             player2 = gameState.player2,
             onNewGame = { viewModel.resetGame() }
+        )
+    }
+    
+    // Diálogo para guardar partida
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            title = { Text("Guardar Partida") },
+            text = {
+                Column {
+                    Text("Ingresa un nombre para la partida:")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = gameName,
+                        onValueChange = { gameName = it },
+                        label = { Text("Nombre") },
+                        singleLine = true,
+                        placeholder = { Text("Mi partida") }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Formato: ${fileFormat.name}",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                val fileManager = FileManager(context)
+                                
+                                // Calcular duración
+                                val startTime = viewModel.repository.getGameStartTime()
+                                val duration = if (startTime > 0) {
+                                    (System.currentTimeMillis() - startTime) / 1000
+                                } else {
+                                    0L
+                                }
+                                
+                                val savedGame = SavedGame(
+                                    name = gameName.ifBlank { "partida_${System.currentTimeMillis()}" },
+                                    format = fileFormat,
+                                    gameState = gameState,
+                                    duration = duration
+                                )
+                                
+                                val success = fileManager.saveGame(savedGame)
+                                
+                                if (success) {
+                                    saveMessage = "✅ Partida guardada correctamente"
+                                } else {
+                                    saveMessage = "❌ Error al guardar la partida"
+                                }
+                                
+                                gameName = ""
+                                showSaveDialog = false
+                                showSaveResult = true
+                            } catch (e: Exception) {
+                                saveMessage = "❌ Error al guardar: ${e.message}"
+                                showSaveDialog = false
+                                showSaveResult = true
+                            }
+                        }
+                    },
+                    enabled = gameName.isNotBlank()
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+    
+    // Diálogo de resultado de guardado
+    if (showSaveResult && saveMessage != null) {
+        AlertDialog(
+            onDismissRequest = { 
+                showSaveResult = false
+                saveMessage = null
+            },
+            title = { Text("Resultado") },
+            text = { Text(saveMessage ?: "") },
+            confirmButton = {
+                TextButton(onClick = { 
+                    showSaveResult = false
+                    saveMessage = null
+                }) {
+                    Text("OK")
+                }
+            }
         )
     }
     
@@ -87,6 +203,21 @@ fun GameScreen(
                     navigationIconContentColor = Color.White
                 )
             )
+        },
+        floatingActionButton = {
+            // Solo mostrar el botón si el juego ha empezado y no ha terminado
+            if (!gameState.isFirstMove && !gameState.isGameOver()) {
+                FloatingActionButton(
+                    onClick = { showSaveDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Done,
+                        contentDescription = "Guardar partida"
+                    )
+                }
+            }
         }
     ) { paddingValues ->
         Column(
@@ -94,23 +225,27 @@ fun GameScreen(
                 .fillMaxSize()
                 .background(Color(0xFFF5F5F5))
                 .padding(paddingValues)
-                .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Título del juego
-        Text(
-            text = "💣 Buscaminas 💣",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF1976D2),
-            modifier = Modifier.padding(top = 8.dp)
-        )
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Padding superior
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            // Título del juego
+            Text(
+                text = "💣 Buscaminas 💣",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1976D2),
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         
         // Información de los jugadores
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             PlayerInfo(
@@ -130,28 +265,31 @@ fun GameScreen(
         GameInfo(
             remainingCells = gameState.remainingCells,
             placedFlags = gameState.placedFlags,
-            totalFlags = gameState.totalFlags
+            totalFlags = gameState.totalFlags,
+            elapsedTime = elapsedTime,
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
         
         // Instrucciones
         if (gameState.isFirstMove) {
-            FirstMoveHint()
+            FirstMoveHint(modifier = Modifier.padding(horizontal = 16.dp))
         } else {
-            GameInstructions()
+            GameInstructions(modifier = Modifier.padding(horizontal = 16.dp))
         }
         
         // Tablero del juego
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .wrapContentHeight(),
+                .wrapContentHeight()
+                .padding(horizontal = 16.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 GameBoard(
@@ -168,7 +306,8 @@ fun GameScreen(
             onClick = { viewModel.resetGame() },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(48.dp)
+                .padding(horizontal = 16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF4CAF50)
             ),
@@ -176,7 +315,7 @@ fun GameScreen(
         ) {
             Text(
                 text = "🔄 Nueva Partida",
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -186,7 +325,8 @@ fun GameScreen(
             onClick = onNavigateToStats,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(48.dp)
+                .padding(horizontal = 16.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.outlinedButtonColors(
                 contentColor = Color(0xFF1976D2)
@@ -194,12 +334,12 @@ fun GameScreen(
         ) {
             Text(
                 text = "📊 Ver Estadísticas",
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         }
     }
 }
@@ -211,10 +351,12 @@ fun GameScreen(
 private fun GameInfo(
     remainingCells: Int,
     placedFlags: Int,
-    totalFlags: Int
+    totalFlags: Int,
+    elapsedTime: Long,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White)
@@ -222,7 +364,20 @@ private fun GameInfo(
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
         InfoItem(
-            label = "Celdas restantes",
+            label = "Tiempo",
+            value = formatTime(elapsedTime),
+            icon = "⏱️"
+        )
+        
+        HorizontalDivider(
+            modifier = Modifier
+                .width(1.dp)
+                .height(40.dp),
+            color = Color.LightGray
+        )
+        
+        InfoItem(
+            label = "Celdas",
             value = remainingCells.toString(),
             icon = "📦"
         )
@@ -236,10 +391,19 @@ private fun GameInfo(
         
         InfoItem(
             label = "Banderas",
-            value = "$placedFlags / $totalFlags",
+            value = "$placedFlags/$totalFlags",
             icon = "🚩"
         )
     }
+}
+
+/**
+ * Formatea el tiempo en formato MM:SS
+ */
+private fun formatTime(seconds: Long): String {
+    val minutes = seconds / 60
+    val secs = seconds % 60
+    return String.format("%02d:%02d", minutes, secs)
 }
 
 /**
@@ -257,16 +421,17 @@ private fun InfoItem(
     ) {
         Text(
             text = icon,
-            fontSize = 24.sp
+            fontSize = 20.sp
         )
         Text(
             text = label,
-            fontSize = 12.sp,
-            color = Color.Gray
+            fontSize = 11.sp,
+            color = Color.Gray,
+            textAlign = TextAlign.Center
         )
         Text(
             text = value,
-            fontSize = 18.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             color = Color.Black
         )
@@ -277,9 +442,9 @@ private fun InfoItem(
  * Mensaje de primer movimiento
  */
 @Composable
-private fun FirstMoveHint() {
+private fun FirstMoveHint(modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = Color(0xFFE3F2FD)
         )
@@ -289,10 +454,10 @@ private fun FirstMoveHint() {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "💡", fontSize = 24.sp)
+            Text(text = "💡", fontSize = 20.sp)
             Text(
                 text = "¡Haz clic en cualquier celda para comenzar! Tu primera jugada siempre es segura.",
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 color = Color(0xFF1976D2)
             )
         }
@@ -303,9 +468,9 @@ private fun FirstMoveHint() {
  * Instrucciones del juego
  */
 @Composable
-private fun GameInstructions() {
+private fun GameInstructions(modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = Color(0xFFFFF3E0)
         )
@@ -316,7 +481,7 @@ private fun GameInstructions() {
         ) {
             Text(
                 text = "📖 Instrucciones:",
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFFE65100)
             )
@@ -329,6 +494,12 @@ private fun GameInstructions() {
                 text = "• Mantén presionado para poner bandera (+5 pts)",
                 fontSize = 12.sp,
                 color = Color(0xFFE65100)
+            )
+            Text(
+                text = "• ¡Cuidado! Pisar una mina te quita 30 puntos",
+                fontSize = 12.sp,
+                color = Color(0xFFE65100),
+                fontWeight = FontWeight.Bold
             )
         }
     }

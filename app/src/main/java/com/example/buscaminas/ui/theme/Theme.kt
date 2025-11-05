@@ -10,44 +10,57 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import com.example.buscaminas.model.AppTheme
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+// Tema Guinda IPN - Claro
+private val GuindaIPNLightScheme = lightColorScheme(
+    primary = GuindaIPNPrimary,
+    secondary = GuindaIPNSecondary,
+    tertiary = GuindaIPNTertiary,
+    background = GuindaIPNBackground,
+    surface = GuindaIPNSurface,
+    error = ErrorColor
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+// Tema Guinda IPN - Oscuro
+private val GuindaIPNDarkScheme = darkColorScheme(
+    primary = GuindaIPNPrimaryDark,
+    secondary = GuindaIPNSecondaryDark,
+    tertiary = GuindaIPNTertiaryDark,
+    background = GuindaIPNBackgroundDark,
+    surface = GuindaIPNSurfaceDark,
+    error = ErrorColor
+)
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+// Tema Azul ESCOM - Claro
+private val AzulESCOMLightScheme = lightColorScheme(
+    primary = AzulESCOMPrimary,
+    secondary = AzulESCOMSecondary,
+    tertiary = AzulESCOMTertiary,
+    background = AzulESCOMBackground,
+    surface = AzulESCOMSurface,
+    error = ErrorColor
+)
+
+// Tema Azul ESCOM - Oscuro
+private val AzulESCOMDarkScheme = darkColorScheme(
+    primary = AzulESCOMPrimaryDark,
+    secondary = AzulESCOMSecondaryDark,
+    tertiary = AzulESCOMTertiaryDark,
+    background = AzulESCOMBackgroundDark,
+    surface = AzulESCOMSurfaceDark,
+    error = ErrorColor
 )
 
 @Composable
 fun BuscaminasTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    appTheme: AppTheme = AppTheme.GUINDA_IPN,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    val colorScheme = when (appTheme) {
+        AppTheme.GUINDA_IPN -> if (darkTheme) GuindaIPNDarkScheme else GuindaIPNLightScheme
+        AppTheme.AZUL_ESCOM -> if (darkTheme) AzulESCOMDarkScheme else AzulESCOMLightScheme
     }
 
     MaterialTheme(

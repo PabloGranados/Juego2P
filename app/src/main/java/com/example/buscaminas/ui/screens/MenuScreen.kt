@@ -24,6 +24,8 @@ fun MenuScreen(
     onPlayLocal: () -> Unit,
     onPlayBluetooth: () -> Unit,
     onViewStats: () -> Unit,
+    onSettings: () -> Unit = {},
+    onSavedGames: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -151,13 +153,79 @@ fun MenuScreen(
                 )
             }
             
+            // Botones adicionales
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Botón Partidas Guardadas
+                OutlinedButton(
+                    onClick = onSavedGames,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color.White
+                    ),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        width = 2.dp,
+                        brush = Brush.linearGradient(listOf(Color.White, Color.White))
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.List,
+                            contentDescription = null
+                        )
+                        Text(
+                            text = "Partidas",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                
+                // Botón Configuración
+                OutlinedButton(
+                    onClick = onSettings,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color.White
+                    ),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        width = 2.dp,
+                        brush = Brush.linearGradient(listOf(Color.White, Color.White))
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null
+                        )
+                        Text(
+                            text = "Ajustes",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+            
             // Información adicional
             Text(
                 text = "¡Encuentra las minas y gana puntos!",
                 fontSize = 14.sp,
                 color = Color.White.copy(alpha = 0.9f),
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 16.dp)
+                modifier = Modifier.padding(top = 8.dp)
             )
         }
     }

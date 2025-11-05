@@ -34,6 +34,7 @@ fun CellView(
     onCellClick: (Int, Int) -> Unit,
     onCellLongClick: (Int, Int) -> Unit,
     isAnimating: Boolean = false,
+    cellSize: androidx.compose.ui.unit.Dp = 35.dp,
     modifier: Modifier = Modifier
 ) {
     // Animación de escala
@@ -46,9 +47,13 @@ fun CellView(
         label = "cell_scale"
     )
     
+    // Ajustar el tamaño del texto según el tamaño de la celda
+    val iconSize = (cellSize.value * 0.55f).sp
+    val numberSize = (cellSize.value * 0.45f).sp
+    
     Box(
         modifier = modifier
-            .size(35.dp)
+            .size(cellSize)
             .scale(scale)
             .clip(RoundedCornerShape(4.dp))
             .background(getCellBackgroundColor(cell))
@@ -63,7 +68,7 @@ fun CellView(
             ),
         contentAlignment = Alignment.Center
     ) {
-        CellContent(cell)
+        CellContent(cell, iconSize, numberSize)
     }
 }
 
@@ -71,13 +76,17 @@ fun CellView(
  * Contenido de la celda según su estado
  */
 @Composable
-private fun CellContent(cell: Cell) {
+private fun CellContent(
+    cell: Cell,
+    iconSize: androidx.compose.ui.unit.TextUnit = 20.sp,
+    numberSize: androidx.compose.ui.unit.TextUnit = 16.sp
+) {
     when {
         cell.isFlagged -> {
             // Mostrar bandera
             Text(
                 text = "🚩",
-                fontSize = 20.sp
+                fontSize = iconSize
             )
         }
         cell.isRevealed -> {
@@ -85,13 +94,13 @@ private fun CellContent(cell: Cell) {
                 // Mostrar mina
                 Text(
                     text = "💣",
-                    fontSize = 20.sp
+                    fontSize = iconSize
                 )
             } else if (cell.adjacentMines > 0) {
                 // Mostrar número de minas adyacentes
                 Text(
                     text = cell.adjacentMines.toString(),
-                    fontSize = 16.sp,
+                    fontSize = numberSize,
                     fontWeight = FontWeight.Bold,
                     color = getNumberColor(cell.adjacentMines)
                 )
