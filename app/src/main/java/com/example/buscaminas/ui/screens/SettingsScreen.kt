@@ -38,6 +38,7 @@ fun SettingsScreen(
     val currentTheme by preferences.appTheme.collectAsState(initial = AppTheme.GUINDA_IPN)
     val currentFormat by preferences.fileFormat.collectAsState(initial = FileFormat.JSON)
     val soundEnabled by preferences.soundEnabled.collectAsState(initial = true)
+    val currentThemeMode by preferences.themeMode.collectAsState(initial = com.example.buscaminas.model.ThemeMode.SYSTEM)
     
     Scaffold(
         topBar = {
@@ -84,6 +85,28 @@ fun SettingsScreen(
                         onSelect = {
                             scope.launch {
                                 preferences.setAppTheme(theme)
+                            }
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Modo de tema",
+                    fontSize = 14.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                // Opciones de modo: Claro / Oscuro / Sistema
+                com.example.buscaminas.model.ThemeMode.values().forEach { mode ->
+                    ThemeModeOption(
+                        mode = mode,
+                        isSelected = mode == currentThemeMode,
+                        onSelect = {
+                            scope.launch {
+                                preferences.setThemeMode(mode)
                             }
                         }
                     )
@@ -203,6 +226,56 @@ fun SettingsScreen(
                         color = Color.Gray
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeModeOption(
+    mode: com.example.buscaminas.model.ThemeMode,
+    isSelected: Boolean,
+    onSelect: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onSelect,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
+        border = if (isSelected) {
+            androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else null
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = mode.displayName,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = when (mode) {
+                        com.example.buscaminas.model.ThemeMode.LIGHT -> "Fuerza modo claro"
+                        com.example.buscaminas.model.ThemeMode.DARK -> "Fuerza modo oscuro"
+                        com.example.buscaminas.model.ThemeMode.SYSTEM -> "Seguir configuración del sistema"
+                    },
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+            if (isSelected) {
+                Text(text = "✓", fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
             }
         }
     }

@@ -14,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,8 +33,40 @@ fun SavedGamesScreen(
 ) {
     val context = LocalContext.current
     val fileManager = remember { FileManager(context) }
-    
+    var importMessage by remember { mutableStateOf("") }
     var savedGames by remember { mutableStateOf(fileManager.listSavedGames()) }
+
+    // Launcher SAF para importar archivo externo a storage interno de la app
+    val importDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            // obtener nombre sugerido
+            val displayName = context.contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: uri.lastPathSegment ?: "imported_game.json"
+
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val outFile = java.io.File(context.filesDir, displayName)
+                java.io.FileOutputStream(outFile).use { out ->
+                    input.copyTo(out)
+                }
+            }
+
+            // refrescar lista
+            savedGames = fileManager.listSavedGames()
+            importMessage = "Importado: $displayName"
+        } catch (e: Exception) {
+            e.printStackTrace()
+            importMessage = "Error al importar: ${e.message}"
+        }
+    }
+    
     var selectedGame by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var gameToDelete by remember { mutableStateOf<String?>(null) }
@@ -68,6 +102,7 @@ fun SavedGamesScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(paddingValues)
         ) {
+                // (El botón de importar se muestra dentro del contenido para evitar solapamientos)
             if (savedGames.isEmpty()) {
                 // Estado vacío
                 Column(
@@ -94,6 +129,13 @@ fun SavedGamesScreen(
                         fontSize = 14.sp,
                         color = Color.Gray
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(onClick = {
+                        importDocumentLauncher.launch(arrayOf("application/json", "text/*"))
+                    }) {
+                        Text("Importar archivo...")
+                    }
                 }
             } else {
                 LazyColumn(
@@ -102,6 +144,16 @@ fun SavedGamesScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Botón de importación como primer item para que esté siempre visible
+                    item {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            OutlinedButton(onClick = {
+                                importDocumentLauncher.launch(arrayOf("application/json", "text/*"))
+                            }) {
+                                Text("Importar archivo...")
+                            }
+                        }
+                    }
                     item {
                         Text(
                             text = "${savedGames.size} partida${if (savedGames.size != 1) "s" else ""} guardada${if (savedGames.size != 1) "s" else ""}",
@@ -130,6 +182,14 @@ fun SavedGamesScreen(
                                 showExportDialog = true
                             }
                         )
+                    }
+                }
+                // Mensaje simple de resultado de import
+                if (importMessage.isNotEmpty()) {
+                    Column(modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(12.dp)) {
+                        Text(importMessage, color = Color.Gray)
                     }
                 }
             }

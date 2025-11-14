@@ -21,6 +21,7 @@ class GamePreferences(private val context: Context) {
     
     companion object {
         private val THEME_KEY = stringPreferencesKey("app_theme")
+        private val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
         private val FILE_FORMAT_KEY = stringPreferencesKey("file_format")
         private val SOUND_ENABLED_KEY = booleanPreferencesKey("sound_enabled")
     }
@@ -40,6 +41,14 @@ class GamePreferences(private val context: Context) {
         val formatName = preferences[FILE_FORMAT_KEY] ?: FileFormat.JSON.name
         FileFormat.values().find { it.name == formatName } ?: FileFormat.JSON
     }
+
+    /**
+     * Obtiene el modo de tema seleccionado (claro/oscuro/sistema)
+     */
+    val themeMode: Flow<com.example.buscaminas.model.ThemeMode> = context.dataStore.data.map { preferences ->
+        val modeName = preferences[THEME_MODE_KEY] ?: com.example.buscaminas.model.ThemeMode.SYSTEM.name
+        com.example.buscaminas.model.ThemeMode.fromString(modeName)
+    }
     
     /**
      * Obtiene si el sonido está habilitado
@@ -54,6 +63,15 @@ class GamePreferences(private val context: Context) {
     suspend fun setAppTheme(theme: AppTheme) {
         context.dataStore.edit { preferences ->
             preferences[THEME_KEY] = theme.name
+        }
+    }
+
+    /**
+     * Guarda el modo de tema (LIGHT, DARK, SYSTEM)
+     */
+    suspend fun setThemeMode(mode: com.example.buscaminas.model.ThemeMode) {
+        context.dataStore.edit { preferences ->
+            preferences[THEME_MODE_KEY] = mode.name
         }
     }
     

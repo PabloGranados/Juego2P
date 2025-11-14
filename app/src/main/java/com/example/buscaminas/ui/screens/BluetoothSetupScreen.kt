@@ -5,6 +5,8 @@ import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.os.Build
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -191,8 +193,22 @@ fun BluetoothSetupScreen(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 items(pairedDevices) { device ->
+                                    // Evitar acceso a propiedades que requieren permiso sin comprobarlo
+                                    val canReadName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        ContextCompat.checkSelfPermission(
+                                            context,
+                                            Manifest.permission.BLUETOOTH_CONNECT
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                    } else true
+
+                                    val displayName = if (canReadName) {
+                                        device.name ?: "Dispositivo desconocido"
+                                    } else {
+                                        "Dispositivo desconocido"
+                                    }
+
                                     DeviceCard(
-                                        deviceName = device.name ?: "Dispositivo desconocido",
+                                        deviceName = displayName,
                                         deviceAddress = device.address,
                                         onClick = {
                                             scope.launch {

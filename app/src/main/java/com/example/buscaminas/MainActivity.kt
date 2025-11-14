@@ -36,10 +36,17 @@ class MainActivity : ComponentActivity() {
         preferences = GamePreferences(applicationContext)
         enableEdgeToEdge()
         setContent {
-            // Observar el tema seleccionado
+            // Observar el tema y modo seleccionado
             val appTheme by preferences.appTheme.collectAsState(initial = com.example.buscaminas.model.AppTheme.GUINDA_IPN)
-            
-            BuscaminasTheme(appTheme = appTheme) {
+            val themeMode by preferences.themeMode.collectAsState(initial = com.example.buscaminas.model.ThemeMode.SYSTEM)
+
+            val darkTheme = when (themeMode) {
+                com.example.buscaminas.model.ThemeMode.LIGHT -> false
+                com.example.buscaminas.model.ThemeMode.DARK -> true
+                com.example.buscaminas.model.ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+
+            BuscaminasTheme(darkTheme = darkTheme, appTheme = appTheme) {
                 val navController = rememberNavController()
                 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
