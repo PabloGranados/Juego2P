@@ -647,6 +647,69 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /**
+     * Exportar todas las partidas como JSON (devuelve el string vía callback)
+     */
+    fun exportAllGamesJson(onResult: (String) -> Unit, onError: (Throwable) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val json = repository.exportAllGamesToJsonString()
+                onResult(json)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError(e)
+            }
+        }
+    }
+
+    /**
+     * Importar partidas desde un JSON string (devuelve número insertado)
+     */
+    fun importGamesFromJsonString(jsonString: String, onComplete: (Int) -> Unit, onError: (Throwable) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val inserted = repository.importGamesFromJsonString(jsonString)
+                // Refrescar estadísticas
+                loadStatistics()
+                onComplete(inserted)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError(e)
+            }
+        }
+    }
+
+    /**
+     * Exporta todas las partidas a un archivo interno de la app
+     */
+    fun exportAllGamesToInternalFile(fileName: String, onResult: (Boolean) -> Unit, onError: (Throwable) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val ok = repository.exportAllGamesToInternalFile(fileName)
+                onResult(ok)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError(e)
+            }
+        }
+    }
+
+    /**
+     * Importa partidas desde un archivo interno de la app
+     */
+    fun importGamesFromInternalFile(fileName: String, onComplete: (Int) -> Unit, onError: (Throwable) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val inserted = repository.importGamesFromInternalFile(fileName)
+                loadStatistics()
+                onComplete(inserted)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError(e)
+            }
+        }
+    }
     
     /**
      * Elimina todas las estadísticas

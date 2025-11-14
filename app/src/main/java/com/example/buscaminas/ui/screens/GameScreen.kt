@@ -46,7 +46,7 @@ fun GameScreen(
     val gameState by viewModel.gameState.collectAsState()
     val lastAction by viewModel.lastAction.collectAsState()
     val isBluetoothMode by viewModel.isBluetoothMode.collectAsState()
-    val connectionState by viewModel.connectionState.collectAsState()
+    // connectionState is available in viewModel if needed; currently unused
     val isHost by viewModel.isHost.collectAsState()
     val elapsedTime by viewModel.elapsedTime.collectAsState()
     

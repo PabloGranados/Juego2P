@@ -22,6 +22,9 @@ class GameRepository(context: Context) {
     
     private val gameDao: GameDao = GameDatabase.getDatabase(context).gameDao()
     
+    // Guardar el contexto de la aplicación para operaciones con archivos
+    private val appContext: Context = context.applicationContext
+    
     private val fileManager = com.example.buscaminas.utils.FileManager(context)
     
     // Constantes para SharedPreferences
@@ -385,6 +388,114 @@ class GameRepository(context: Context) {
      * Obtiene todas las partidas como lista
      */
     suspend fun getAllGamesList(): List<GameRecord> = gameDao.getAllGamesList()
+
+    // ==================== Export / Import (JSON) ====================
+
+    /**
+     * Exporta todas las partidas como un String JSON (JSONArray)
+     */
+    suspend fun exportAllGamesToJsonString(): String {
+        val games = getAllGamesList()
+        val jsonArray = org.json.JSONArray()
+
+        for (g in games) {
+            val obj = org.json.JSONObject().apply {
+                put("id", g.id)
+                put("timestamp", g.timestamp)
+                put("duration", g.duration)
+                put("player1Name", g.player1Name)
+                put("player2Name", g.player2Name)
+                put("player1Points", g.player1Points)
+                put("player2Points", g.player2Points)
+                put("winnerId", g.winnerId)
+                put("gameStatus", g.gameStatus)
+                put("totalCellsRevealed", g.totalCellsRevealed)
+                put("totalFlagsPlaced", g.totalFlagsPlaced)
+                put("totalMines", g.totalMines)
+                put("boardRows", g.boardRows)
+                put("boardCols", g.boardCols)
+                put("hitMine", g.hitMine)
+                put("completedBoard", g.completedBoard)
+            }
+            jsonArray.put(obj)
+        }
+
+        return jsonArray.toString()
+    }
+
+    /**
+     * Importa partidas desde un String JSON (se espera un JSONArray de objetos GameRecord-like).
+     * Las partidas importadas se insertan en la base de datos. Devuelve la cantidad insertada.
+     */
+    suspend fun importGamesFromJsonString(jsonString: String): Int {
+        try {
+            val jsonArray = org.json.JSONArray(jsonString)
+            var inserted = 0
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+
+                // Crear un nuevo GameRecord dejando id en 0 para autogenerar
+                val record = GameRecord(
+                    id = 0,
+                    timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                    duration = obj.optLong("duration", 0L),
+                    player1Name = obj.optString("player1Name", "Jugador 1"),
+                    player2Name = obj.optString("player2Name", "Jugador 2"),
+                    player1Points = obj.optInt("player1Points", 0),
+                    player2Points = obj.optInt("player2Points", 0),
+                    winnerId = obj.optInt("winnerId", -1),
+                    gameStatus = obj.optString("gameStatus", "GAME_OVER"),
+                    totalCellsRevealed = obj.optInt("totalCellsRevealed", 0),
+                    totalFlagsPlaced = obj.optInt("totalFlagsPlaced", 0),
+                    totalMines = obj.optInt("totalMines", 0),
+                    boardRows = obj.optInt("boardRows", 10),
+                    boardCols = obj.optInt("boardCols", 10),
+                    hitMine = obj.optBoolean("hitMine", false),
+                    completedBoard = obj.optBoolean("completedBoard", false)
+                )
+
+                gameDao.insertGame(record)
+                inserted++
+            }
+
+            return inserted
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return 0
+        }
+    }
+
+    /**
+     * Exporta todas las partidas a un archivo dentro del almacenamiento interno de la app
+     * @param fileName nombre del archivo (ej: exported_games_2025-11-08.json)
+     */
+    suspend fun exportAllGamesToInternalFile(fileName: String): Boolean {
+        return try {
+            val json = exportAllGamesToJsonString()
+            val outFile = java.io.File(appContext.filesDir, fileName)
+            outFile.outputStream().use { it.write(json.toByteArray()) }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /**
+     * Importa partidas desde un archivo en el almacenamiento interno de la app
+     */
+    suspend fun importGamesFromInternalFile(fileName: String): Int {
+        return try {
+            val inFile = java.io.File(appContext.filesDir, fileName)
+            if (!inFile.exists()) return 0
+            val content = inFile.inputStream().bufferedReader().use { it.readText() }
+            importGamesFromJsonString(content)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            0
+        }
+    }
     
     // ==================== File Manager ====================
     
