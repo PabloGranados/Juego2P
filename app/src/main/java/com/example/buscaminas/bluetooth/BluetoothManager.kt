@@ -58,8 +58,10 @@ class BluetoothManager(private val context: Context) {
     companion object {
         private const val TAG = "BluetoothManager"
         private const val APP_NAME = "Buscaminas"
-        private val MY_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        // UUID único para esta aplicación
+        private val MY_UUID: UUID = UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
         private const val MESSAGE_DELIMITER = "\n"
+        const val DISCOVERABLE_DURATION = 300 // 5 minutos
     }
     
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
@@ -77,6 +79,12 @@ class BluetoothManager(private val context: Context) {
     
     private val _isHost = MutableStateFlow(false)
     val isHost: StateFlow<Boolean> = _isHost.asStateFlow()
+    
+    private val _discoveredDevices = MutableStateFlow<List<BluetoothDevice>>(emptyList())
+    val discoveredDevices: StateFlow<List<BluetoothDevice>> = _discoveredDevices.asStateFlow()
+    
+    private val _isDiscovering = MutableStateFlow(false)
+    val isDiscovering: StateFlow<Boolean> = _isDiscovering.asStateFlow()
     
     private var isListening = false
     
@@ -114,6 +122,64 @@ class BluetoothManager(private val context: Context) {
     fun getPairedDevices(): List<BluetoothDevice> {
         if (!hasBluetoothPermissions()) return emptyList()
         return bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
+    }
+    
+    /**
+     * Inicia el descubrimiento de dispositivos cercanos
+     */
+    @SuppressLint("MissingPermission")
+    fun startDiscovery() {
+        if (!hasBluetoothPermissions()) {
+            Log.e(TAG, "No hay permisos para buscar dispositivos")
+            return
+        }
+        
+        if (bluetoothAdapter?.isDiscovering == true) {
+            bluetoothAdapter?.cancelDiscovery()
+        }
+        
+        _discoveredDevices.value = emptyList()
+        _isDiscovering.value = true
+        
+        val started = bluetoothAdapter?.startDiscovery() ?: false
+        if (started) {
+            Log.d(TAG, "Búsqueda de dispositivos iniciada")
+        } else {
+            Log.e(TAG, "No se pudo iniciar la búsqueda")
+            _isDiscovering.value = false
+        }
+    }
+    
+    /**
+     * Detiene el descubrimiento de dispositivos
+     */
+    @SuppressLint("MissingPermission")
+    fun stopDiscovery() {
+        if (hasBluetoothPermissions()) {
+            bluetoothAdapter?.cancelDiscovery()
+            _isDiscovering.value = false
+            Log.d(TAG, "Búsqueda de dispositivos detenida")
+        }
+    }
+    
+    /**
+     * Agrega un dispositivo descubierto a la lista
+     */
+    fun addDiscoveredDevice(device: BluetoothDevice) {
+        val currentList = _discoveredDevices.value.toMutableList()
+        if (!currentList.any { it.address == device.address }) {
+            currentList.add(device)
+            _discoveredDevices.value = currentList
+            Log.d(TAG, "Dispositivo descubierto agregado: ${device.address}")
+        }
+    }
+    
+    /**
+     * Finaliza el descubrimiento
+     */
+    fun onDiscoveryFinished() {
+        _isDiscovering.value = false
+        Log.d(TAG, "Búsqueda de dispositivos finalizada. Total encontrados: ${_discoveredDevices.value.size}")
     }
     
     /**
@@ -269,6 +335,7 @@ class BluetoothManager(private val context: Context) {
      */
     fun disconnect() {
         isListening = false
+        stopDiscovery()
         
         try {
             inputStream?.close()
@@ -286,6 +353,7 @@ class BluetoothManager(private val context: Context) {
         
         _connectionState.value = ConnectionState.DISCONNECTED
         _isHost.value = false
+        _discoveredDevices.value = emptyList()
         
         Log.d(TAG, "Desconectado")
     }

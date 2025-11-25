@@ -3,9 +3,13 @@ package com.example.buscaminas.ui.screens
 import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.content.pm.PackageManager
+import android.bluetooth.BluetoothDevice
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,9 +50,53 @@ fun BluetoothSetupScreen(
     
     val connectionState by viewModel.connectionState.collectAsState()
     val pairedDevices by viewModel.pairedDevices.collectAsState()
+    val discoveredDevices by viewModel.discoveredDevices.collectAsState()
+    val isDiscovering by viewModel.isDiscovering.collectAsState()
     val isHost by viewModel.isHost.collectAsState()
     
     var showPermissionRationale by remember { mutableStateOf(false) }
+    
+    // BroadcastReceiver para dispositivos descubiertos
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    BluetoothDevice.ACTION_FOUND -> {
+                        val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                        }
+                        device?.let { viewModel.addDiscoveredDevice(it) }
+                    }
+                    BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                        viewModel.onDiscoveryFinished()
+                    }
+                }
+            }
+        }
+        
+        val filter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+        }
+        context.registerReceiver(receiver, filter)
+        
+        onDispose {
+            context.unregisterReceiver(receiver)
+            viewModel.stopDiscovery()
+        }
+    }
+    
+    // Launcher para hacer el dispositivo visible
+    val discoverabilityLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_CANCELED) {
+            // Usuario canceló hacerse visible
+        }
+    }
     
     // Launcher para habilitar Bluetooth
     val enableBluetoothLauncher = rememberLauncherForActivityResult(
@@ -143,6 +191,12 @@ fun BluetoothSetupScreen(
                         Button(
                             onClick = {
                                 scope.launch {
+                                    // Hacer el dispositivo visible
+                                    val discoverableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                                        putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+                                    }
+                                    discoverabilityLauncher.launch(discoverableIntent)
+                                    // Iniciar servidor
                                     viewModel.startBluetoothServer()
                                 }
                             },
@@ -172,8 +226,99 @@ fun BluetoothSetupScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         
+                        // Botón para buscar dispositivos
+                        OutlinedButton(
+                            onClick = {
+                                if (isDiscovering) {
+                                    viewModel.stopDiscovery()
+                                } else {
+                                    viewModel.startDiscovery()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = if (isDiscovering) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = null
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (isDiscovering) "Detener búsqueda" else "Buscar dispositivos cercanos")
+                        }
+                        
+                        if (isDiscovering) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Buscando dispositivos...",
+                                    fontSize = 14.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+                        
+                        // Dispositivos descubiertos
+                        if (discoveredDevices.isNotEmpty()) {
+                            Text(
+                                text = "Dispositivos encontrados:",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 200.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(discoveredDevices) { device ->
+                                    val canReadName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        ContextCompat.checkSelfPermission(
+                                            context,
+                                            Manifest.permission.BLUETOOTH_CONNECT
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                    } else true
+
+                                    val displayName = if (canReadName) {
+                                        device.name ?: "Dispositivo desconocido"
+                                    } else {
+                                        "Dispositivo desconocido"
+                                    }
+
+                                    DeviceCard(
+                                        deviceName = displayName,
+                                        deviceAddress = device.address,
+                                        isPaired = false,
+                                        onClick = {
+                                            viewModel.stopDiscovery()
+                                            scope.launch {
+                                                viewModel.connectToDevice(device)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        
                         // Lista de dispositivos vinculados
-                        if (pairedDevices.isEmpty()) {
+                        if (pairedDevices.isNotEmpty()) {
+                            Text(
+                                text = "Dispositivos vinculados:",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                        
+                        if (pairedDevices.isEmpty() && discoveredDevices.isEmpty() && !isDiscovering) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(
@@ -181,13 +326,13 @@ fun BluetoothSetupScreen(
                                 )
                             ) {
                                 Text(
-                                    text = "No hay dispositivos vinculados.\nVincula dispositivos desde Configuración de Android.",
+                                    text = "No hay dispositivos disponibles.\nPresiona 'Buscar dispositivos cercanos' o vincula dispositivos desde Configuración de Android.",
                                     modifier = Modifier.padding(16.dp),
                                     color = Color(0xFFE65100),
                                     textAlign = TextAlign.Center
                                 )
                             }
-                        } else {
+                        } else if (pairedDevices.isNotEmpty()) {
                             LazyColumn(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -210,6 +355,7 @@ fun BluetoothSetupScreen(
                                     DeviceCard(
                                         deviceName = displayName,
                                         deviceAddress = device.address,
+                                        isPaired = true,
                                         onClick = {
                                             scope.launch {
                                                 viewModel.connectToDevice(device)
@@ -472,6 +618,7 @@ private fun RequestPermissionsCard(onRequestPermissions: () -> Unit) {
 private fun DeviceCard(
     deviceName: String,
     deviceAddress: String,
+    isPaired: Boolean,
     onClick: () -> Unit
 ) {
     Card(
@@ -491,9 +638,9 @@ private fun DeviceCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = Icons.Default.Phone,
+                imageVector = if (isPaired) Icons.Default.Phone else Icons.Default.Search,
                 contentDescription = null,
-                tint = Color(0xFF2196F3),
+                tint = if (isPaired) Color(0xFF4CAF50) else Color(0xFF2196F3),
                 modifier = Modifier.size(32.dp)
             )
             Column(modifier = Modifier.weight(1f)) {
@@ -508,6 +655,14 @@ private fun DeviceCard(
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
+                if (isPaired) {
+                    Text(
+                        text = "Vinculado",
+                        fontSize = 11.sp,
+                        color = Color(0xFF4CAF50),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,

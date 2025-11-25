@@ -73,6 +73,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _pairedDevices = MutableStateFlow<List<BluetoothDevice>>(emptyList())
     val pairedDevices: StateFlow<List<BluetoothDevice>> = _pairedDevices.asStateFlow()
     
+    val discoveredDevices: StateFlow<List<BluetoothDevice>> = bluetoothManager.discoveredDevices
+    val isDiscovering: StateFlow<Boolean> = bluetoothManager.isDiscovering
+    
     private val _isBluetoothMode = MutableStateFlow(false)
     val isBluetoothMode: StateFlow<Boolean> = _isBluetoothMode.asStateFlow()
     
@@ -750,6 +753,34 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun refreshPairedDevices() {
         _pairedDevices.value = bluetoothManager.getPairedDevices()
+    }
+    
+    /**
+     * Inicia búsqueda de dispositivos
+     */
+    fun startDiscovery() {
+        bluetoothManager.startDiscovery()
+    }
+    
+    /**
+     * Detiene búsqueda de dispositivos
+     */
+    fun stopDiscovery() {
+        bluetoothManager.stopDiscovery()
+    }
+    
+    /**
+     * Agrega un dispositivo descubierto
+     */
+    fun addDiscoveredDevice(device: BluetoothDevice) {
+        bluetoothManager.addDiscoveredDevice(device)
+    }
+    
+    /**
+     * Notifica que la búsqueda finalizó
+     */
+    fun onDiscoveryFinished() {
+        bluetoothManager.onDiscoveryFinished()
     }
     
     /**
