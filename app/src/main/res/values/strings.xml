@@ -16,7 +16,7 @@
     <string name="draw">¡Empate!</string>
     <string name="game_over">¡Boom!</string>
     <string name="mine_hit">Pisaste una mina</string>
-    <string name="final_score">Puntos finales: %d vs %d</string>
+    <string name="final_score" formatted="false">Puntos finales: %d vs %d</string>
     <string name="draw_score">Ambos jugadores: %d puntos</string>
     <string name="first_move_hint">¡Haz clic en cualquier celda para comenzar! Tu primera jugada siempre es segura.</string>
     <string name="instructions_title">Instrucciones:</string>

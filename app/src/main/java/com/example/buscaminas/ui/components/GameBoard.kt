@@ -35,7 +35,7 @@ fun GameBoard(
     val totalSpacing = spacing * (cols - 1)
     val cellSize = ((availableWidth - totalSpacing) / cols).coerceIn(28.dp, 45.dp)
     
-    BoxWithConstraints(
+    Box(
         modifier = modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
