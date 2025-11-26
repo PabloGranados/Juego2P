@@ -2,6 +2,7 @@ package com.example.buscaminas.viewmodel
 
 import android.app.Application
 import android.bluetooth.BluetoothDevice
+import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -179,14 +180,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val cell = currentState.board[row][col]
         if (!cell.canBeRevealed()) return
         
-        // Enviar mensaje Bluetooth si está en modo multijugador
-        if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
-            viewModelScope.launch {
-                bluetoothManager.sendMessage(
-                    BluetoothMessage(MessageType.CELL_CLICK, "$row,$col")
-                )
-            }
-        }
+        // NO enviar mensaje antes de procesar. Procesamos primero y luego enviamos el resultado
         
         viewModelScope.launch {
             // Obtener el estado actual al inicio de la coroutine
@@ -332,14 +326,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val cell = currentState.board[row][col]
         if (!cell.canBeFlagged()) return
         
-        // Enviar mensaje Bluetooth si está en modo multijugador
-        if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
-            viewModelScope.launch {
-                bluetoothManager.sendMessage(
-                    BluetoothMessage(MessageType.CELL_LONG_CLICK, "$row,$col")
-                )
-            }
-        }
+        // NO enviar mensaje antes de procesar. Procesamos primero y luego enviamos el resultado
         
         viewModelScope.launch {
             // Alternar bandera
@@ -380,6 +367,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 
                 // Cambiar de turno después de colocar una bandera
                 _gameState.value = newState.switchTurn()
+                
+                // DESPUÉS de actualizar el estado localmente, enviar el estado completo al oponente
+                if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
+                    val stateData = serializeGameState(_gameState.value)
+                    bluetoothManager.sendMessage(
+                        BluetoothMessage(MessageType.GAME_STATE_UPDATE, stateData)
+                    )
+                }
             } else {
                 // Decrementar el contador cuando se quita una bandera
                 repository.decrementFlagsPlaced()
@@ -389,6 +384,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     board = updatedBoard,
                     placedFlags = placedFlags
                 )
+                
+                // También enviar el estado cuando se quita una bandera
+                if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
+                    val stateData = serializeGameState(_gameState.value)
+                    bluetoothManager.sendMessage(
+                        BluetoothMessage(MessageType.GAME_STATE_UPDATE, stateData)
+                    )
+                }
             }
         }
     }
@@ -863,27 +866,35 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         startTimer()
                     }
                 }
-                MessageType.CELL_CLICK -> {
-                    val coords = message.data.split(",")
-                    if (coords.size == 2) {
-                        val row = coords[0].toIntOrNull()
-                        val col = coords[1].toIntOrNull()
-                        if (row != null && col != null) {
-                            // Procesar el clic de celda del oponente
-                            processCellClick(row, col)
+                MessageType.GAME_STATE_UPDATE -> {
+                    // Aplicar el estado completo recibido del oponente directamente
+                    deserializeGameState(message.data)?.let { receivedState ->
+                        // Actualizar el tablero interno
+                        board = Board(boardRows, boardCols, minesCount)
+                        receivedState.board.forEachIndexed { rowIndex, row ->
+                            row.forEachIndexed { colIndex, cell ->
+                                board.setCellState(rowIndex, colIndex, cell)
+                            }
                         }
+                        
+                        // Aplicar el estado completo
+                        _gameState.value = receivedState
+                        
+                        // Actualizar la animación si hay una última acción
+                        // (la última acción es la celda modificada por el oponente)
+                        _lastAction.value = null // Reset para forzar recomposición
+                        
+                        // Guardar el estado sincronizado
+                        repository.saveCurrentGameToPreferences(receivedState)
                     }
                 }
+                MessageType.CELL_CLICK -> {
+                    // DEPRECATED: Ya no se usa, todo se maneja con GAME_STATE_UPDATE
+                    // Se mantiene para compatibilidad pero no procesa nada
+                }
                 MessageType.CELL_LONG_CLICK -> {
-                    val coords = message.data.split(",")
-                    if (coords.size == 2) {
-                        val row = coords[0].toIntOrNull()
-                        val col = coords[1].toIntOrNull()
-                        if (row != null && col != null) {
-                            // Procesar el clic largo de celda del oponente
-                            processCellLongClick(row, col)
-                        }
-                    }
+                    // DEPRECATED: Ya no se usa, todo se maneja con GAME_STATE_UPDATE
+                    // Se mantiene para compatibilidad pero no procesa nada
                 }
                 MessageType.RESET_GAME -> {
                     resetGame()
@@ -1006,6 +1017,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 handleVictory(newState)
             } else {
                 _gameState.value = newState.switchTurn()
+            }
+            
+            // DESPUÉS de actualizar el estado localmente, enviar el estado completo al oponente
+            if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
+                val stateData = serializeGameState(_gameState.value)
+                bluetoothManager.sendMessage(
+                    BluetoothMessage(MessageType.GAME_STATE_UPDATE, stateData)
+                )
             }
         }
     }
@@ -1229,6 +1248,99 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         // Restaurar el tablero con las minas
         board.restoreBoard(mutableBoard.map { it.toList() })
     }
+    
+    /**
+     * Serializa el estado completo del juego a JSON string
+     * Incluye: tablero, jugadores, turno actual, puntos, flags, etc.
+     */
+    private fun serializeGameState(state: GameState): String {
+        val boardData = state.board.map { row ->
+            row.map { cell ->
+                "${cell.isMine.toInt()},${cell.isRevealed.toInt()},${cell.isFlagged.toInt()},${cell.adjacentMines}"
+            }.joinToString("|")
+        }.joinToString(";")
+        
+        return listOf(
+            boardData,
+            "${state.player1.name}:${state.player1.points}:${state.player1.wins}",
+            "${state.player2.name}:${state.player2.points}:${state.player2.wins}",
+            state.currentPlayer.toString(),
+            state.gameStatus.name,
+            state.remainingCells.toString(),
+            state.totalFlags.toString(),
+            state.placedFlags.toString(),
+            state.isFirstMove.toInt().toString(),
+            state.lastRevealedBy.toString()
+        ).joinToString("###")
+    }
+    
+    /**
+     * Deserializa el estado completo del juego desde JSON string
+     */
+    private fun deserializeGameState(data: String): GameState? {
+        return try {
+            val parts = data.split("###")
+            if (parts.size < 10) return null
+            
+            // Parsear tablero
+            val boardRows = parts[0].split(";").map { rowData ->
+                rowData.split("|").map { cellData ->
+                    val cellParts = cellData.split(",")
+                    if (cellParts.size == 4) {
+                        com.example.buscaminas.model.Cell(
+                            isMine = cellParts[0].toInt() == 1,
+                            isRevealed = cellParts[1].toInt() == 1,
+                            isFlagged = cellParts[2].toInt() == 1,
+                            adjacentMines = cellParts[3].toInt()
+                        )
+                    } else {
+                        com.example.buscaminas.model.Cell()
+                    }
+                }
+            }
+            
+            // Parsear jugador 1
+            val player1Parts = parts[1].split(":")
+            val player1 = Player(
+                id = 1,
+                name = player1Parts[0],
+                points = player1Parts.getOrNull(1)?.toIntOrNull() ?: 0,
+                wins = player1Parts.getOrNull(2)?.toIntOrNull() ?: 0,
+                color = Color(0xFF2196F3)
+            )
+            
+            // Parsear jugador 2
+            val player2Parts = parts[2].split(":")
+            val player2 = Player(
+                id = 2,
+                name = player2Parts[0],
+                points = player2Parts.getOrNull(1)?.toIntOrNull() ?: 0,
+                wins = player2Parts.getOrNull(2)?.toIntOrNull() ?: 0,
+                color = Color(0xFFF44336)
+            )
+            
+            GameState(
+                board = boardRows,
+                player1 = player1,
+                player2 = player2,
+                currentPlayer = parts[3].toIntOrNull() ?: 1,
+                gameStatus = try { GameStatus.valueOf(parts[4]) } catch (e: Exception) { GameStatus.PLAYING },
+                remainingCells = parts[5].toIntOrNull() ?: 0,
+                totalFlags = parts[6].toIntOrNull() ?: 15,
+                placedFlags = parts[7].toIntOrNull() ?: 0,
+                isFirstMove = parts[8].toIntOrNull() == 1,
+                lastRevealedBy = parts[9].toIntOrNull() ?: 0
+            )
+        } catch (e: Exception) {
+            Log.e("GameViewModel", "Error deserializando estado del juego", e)
+            null
+        }
+    }
+    
+    /**
+     * Extensión para convertir Boolean a Int
+     */
+    private fun Boolean.toInt() = if (this) 1 else 0
     
     /**
      * Limpia recursos al destruir el ViewModel

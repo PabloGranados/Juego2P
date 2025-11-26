@@ -278,4 +278,14 @@ class Board(
      * Obtiene el número de minas en el tablero
      */
     fun getMinesCount(): Int = minesCount
+    
+    /**
+     * Establece el estado de una celda específica
+     * Usado para sincronización Bluetooth
+     */
+    fun setCellState(row: Int, col: Int, cell: Cell) {
+        if (isValidPosition(row, col)) {
+            board[row][col] = cell.copy()
+        }
+    }
 }
