@@ -70,6 +70,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val connectionState: StateFlow<ConnectionState> = bluetoothManager.connectionState
     val isHost: StateFlow<Boolean> = bluetoothManager.isHost
     
+    // Flag para saber si el tablero ya fue sincronizado
+    private val _boardSynced = MutableStateFlow(false)
+    val boardSynced: StateFlow<Boolean> = _boardSynced.asStateFlow()
+    
     private val _pairedDevices = MutableStateFlow<List<BluetoothDevice>>(emptyList())
     val pairedDevices: StateFlow<List<BluetoothDevice>> = _pairedDevices.asStateFlow()
     
@@ -164,6 +168,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             val isMyTurn = (bluetoothManager.isHost.value && currentState.currentPlayer == 1) ||
                           (!bluetoothManager.isHost.value && currentState.currentPlayer == 2)
             if (!isMyTurn) return
+            
+            // Si es el cliente y el tablero no está sincronizado, no permitir movimientos
+            if (!bluetoothManager.isHost.value && !_boardSynced.value) {
+                return
+            }
         }
         
         // Verificar que la celda pueda ser revelada
@@ -187,6 +196,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             if (workingState.isFirstMove) {
                 // Generar minas (la función ya limpia las minas existentes)
                 board.generateMines(row, col)
+                
+                // Si es el host en modo Bluetooth, enviar el tablero al cliente
+                if (_isBluetoothMode.value && bluetoothManager.isHost.value && 
+                    connectionState.value == ConnectionState.CONNECTED) {
+                    val boardData = serializeBoardMines()
+                    bluetoothManager.sendMessage(
+                        BluetoothMessage(MessageType.BOARD_SYNC, boardData)
+                    )
+                }
                 
                 // Guardar tiempo de inicio y resetear contadores
                 repository.saveGameStartTime()
@@ -489,6 +507,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             // Resetear el temporizador
             resetTimer()
             
+            // Resetear el flag de sincronización si está en modo Bluetooth
+            if (_isBluetoothMode.value) {
+                _boardSynced.value = false
+            }
+            
             val currentState = _gameState.value
             
             // Crear nuevo tablero
@@ -788,6 +811,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun startBluetoothServer() {
         _isBluetoothMode.value = true
+        _boardSynced.value = false
         viewModelScope.launch {
             bluetoothManager.startServer()
         }
@@ -798,6 +822,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun connectToDevice(device: BluetoothDevice) {
         _isBluetoothMode.value = true
+        _boardSynced.value = false
         viewModelScope.launch {
             bluetoothManager.connectToDevice(device)
         }
@@ -817,6 +842,27 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleBluetoothMessage(message: BluetoothMessage) {
         viewModelScope.launch {
             when (message.type) {
+                MessageType.BOARD_SYNC -> {
+                    // Solo el cliente debe procesar este mensaje
+                    if (!bluetoothManager.isHost.value) {
+                        deserializeBoardMines(message.data)
+                        _boardSynced.value = true
+                        
+                        // Actualizar el estado con el tablero sincronizado
+                        val currentState = _gameState.value
+                        _gameState.value = currentState.copy(
+                            board = board.getBoard(),
+                            isFirstMove = false
+                        )
+                        
+                        // Guardar el estado
+                        repository.saveCurrentGameToPreferences(_gameState.value)
+                        
+                        // Iniciar el temporizador
+                        repository.saveGameStartTime()
+                        startTimer()
+                    }
+                }
                 MessageType.CELL_CLICK -> {
                     val coords = message.data.split(",")
                     if (coords.size == 2) {
@@ -867,6 +913,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         
         if (workingState.isFirstMove) {
             board.generateMines(row, col)
+            
+            // Si es el host en modo Bluetooth, enviar el tablero al cliente
+            if (_isBluetoothMode.value && bluetoothManager.isHost.value && 
+                connectionState.value == ConnectionState.CONNECTED) {
+                val boardData = serializeBoardMines()
+                bluetoothManager.sendMessage(
+                    BluetoothMessage(MessageType.BOARD_SYNC, boardData)
+                )
+            }
+            
             repository.saveGameStartTime()
             repository.resetCurrentGameCounters()
             
@@ -1100,6 +1156,78 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             println("❌ Error al cargar la partida: ${e.message}")
             false
         }
+    }
+    
+    /**
+     * Serializa las posiciones de las minas del tablero a un string
+     * Formato: "row1,col1;row2,col2;..."
+     */
+    private fun serializeBoardMines(): String {
+        val currentBoard = board.getBoard()
+        val minePositions = mutableListOf<String>()
+        
+        for (row in currentBoard.indices) {
+            for (col in currentBoard[row].indices) {
+                if (currentBoard[row][col].isMine) {
+                    minePositions.add("$row,$col")
+                }
+            }
+        }
+        
+        return minePositions.joinToString(";")
+    }
+    
+    /**
+     * Deserializa las posiciones de las minas y las aplica al tablero
+     */
+    private fun deserializeBoardMines(data: String) {
+        // Limpiar el tablero actual
+        board = Board(boardRows, boardCols, minesCount)
+        val cleanBoard = board.initialize()
+        
+        // Parsear las posiciones de las minas
+        val minePositions = data.split(";").mapNotNull { position ->
+            val coords = position.split(",")
+            if (coords.size == 2) {
+                val row = coords[0].toIntOrNull()
+                val col = coords[1].toIntOrNull()
+                if (row != null && col != null) row to col else null
+            } else null
+        }
+        
+        // Aplicar las minas manualmente al tablero
+        val mutableBoard = cleanBoard.map { it.toMutableList() }.toMutableList()
+        
+        for ((row, col) in minePositions) {
+            if (row in 0 until boardRows && col in 0 until boardCols) {
+                mutableBoard[row][col] = mutableBoard[row][col].copy(isMine = true)
+            }
+        }
+        
+        // Calcular números adyacentes
+        for (row in 0 until boardRows) {
+            for (col in 0 until boardCols) {
+                if (!mutableBoard[row][col].isMine) {
+                    var adjacentCount = 0
+                    for (dr in -1..1) {
+                        for (dc in -1..1) {
+                            if (dr == 0 && dc == 0) continue
+                            val newRow = row + dr
+                            val newCol = col + dc
+                            if (newRow in 0 until boardRows && newCol in 0 until boardCols) {
+                                if (mutableBoard[newRow][newCol].isMine) {
+                                    adjacentCount++
+                                }
+                            }
+                        }
+                    }
+                    mutableBoard[row][col] = mutableBoard[row][col].copy(adjacentMines = adjacentCount)
+                }
+            }
+        }
+        
+        // Restaurar el tablero con las minas
+        board.restoreBoard(mutableBoard.map { it.toList() })
     }
     
     /**

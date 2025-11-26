@@ -29,7 +29,8 @@ enum class MessageType {
     CELL_LONG_CLICK,
     GAME_STATE,
     RESET_GAME,
-    PLAYER_INFO
+    PLAYER_INFO,
+    BOARD_SYNC  // Sincronización del tablero (posiciones de minas)
 }
 
 /**
