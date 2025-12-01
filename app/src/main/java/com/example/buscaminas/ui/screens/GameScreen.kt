@@ -292,12 +292,15 @@ fun GameScreen(
                     .padding(8.dp),
                 contentAlignment = Alignment.Center
             ) {
-                GameBoard(
-                    board = gameState.board,
-                    onCellClick = viewModel::onCellClick,
-                    onCellLongClick = viewModel::onCellLongClick,
-                    lastAction = lastAction
-                )
+                // Key para forzar recomposición cuando cambia el tablero
+                key(gameState.board.hashCode(), gameState.currentPlayer) {
+                    GameBoard(
+                        board = gameState.board,
+                        onCellClick = viewModel::onCellClick,
+                        onCellLongClick = viewModel::onCellLongClick,
+                        lastAction = lastAction
+                    )
+                }
             }
         }
         

@@ -1,122 +1,198 @@
 # Guía de Debugging para Bluetooth en Buscaminas
 
-## Cambios Realizados
+## 🔧 Cambios Realizados (Versión Reescrita)
 
-### 1. Logging Mejorado
-Se agregaron logs detallados para rastrear el flujo de mensajes Bluetooth:
+### 1. Sistema de Logging con Emojis
+Los logs ahora usan emojis para facilitar la identificación rápida:
 
-- **En el Jugador 1 (Host):**
-  - `>>> PRIMER MOVIMIENTO - Generando minas`
-  - `>>> HOST enviando BOARD_SYNC al cliente`
-  - `>>> Enviando GAME_STATE_UPDATE después de revelar celdas`
+- 🔔 **Mensaje recibido en el flow**
+- 🔷 **Procesando mensaje**
+- 🎯 **Primer movimiento**
+- 📤 **Enviando mensaje**
+- ✅ **Operación exitosa**
+- ❌ **Error**
+- ✓ **Bluetooth: mensaje enviado**
+- ✗ **Bluetooth: error**
 
-- **En el Jugador 2 (Cliente):**
-  - `>>> CLIENTE recibió BOARD_SYNC`
-  - `>>> Recibido GAME_STATE_UPDATE`
-  - `>>> Estado deserializado`
-  - `>>> ACTUALIZACIÓN COMPLETA`
+### 2. Dispatcher Principal
+- Todo el manejo de mensajes se ejecuta en `Dispatchers.Main`
+- Garantiza que las actualizaciones del UI se disparen correctamente
+- Los envíos de mensajes se hacen en `Dispatchers.IO`
 
-### 2. Verificaciones en BluetoothManager
-- `✓ Mensaje ENVIADO: [tipo]` - Confirma que el mensaje se envió
-- `✓ Mensaje RECIBIDO: [tipo]` - Confirma que el mensaje llegó
-- `✗ NO CONECTADO` - Error si no hay conexión
+### 3. Flujo Simplificado
+```
+Jugador 1 hace click
+  ↓
+Genera minas (si es primer movimiento)
+  ↓
+Envía BOARD_SYNC al Jugador 2 (si es host)
+  ↓
+Revela celdas
+  ↓
+Actualiza estado local
+  ↓
+Cambia turno
+  ↓
+Envía GAME_STATE_UPDATE al Jugador 2
+```
 
-## Cómo Verificar los Logs
+## 📊 Cómo Verificar los Logs
 
-### Usando Android Studio:
-
-1. Conecta ambos dispositivos (si es posible) o usa Logcat con filtros
-2. Ve a **Logcat** en la parte inferior
-3. Filtra por:
-   - Tag: `GameViewModel` para ver la lógica del juego
-   - Tag: `BluetoothManager` para ver la comunicación Bluetooth
-
-### Filtros Útiles:
-
+### Filtro en Logcat:
 ```
 tag:GameViewModel|tag:BluetoothManager
 ```
 
-O busca por:
+### Buscar por emojis:
 ```
->>>
-✓
-✗
+🔔
+📤
+✅
+❌
 ```
 
-## Qué Buscar en los Logs
+## ✅ Flujo Correcto Paso a Paso
 
-### Flujo Normal (Cuando funciona correctamente):
+### 1️⃣ Jugador 1 (Host) hace el primer click:
 
-1. **Jugador 1 hace click:**
-   ```
-   GameViewModel: >>> PRIMER MOVIMIENTO - Generando minas
-   GameViewModel: >>> HOST enviando BOARD_SYNC al cliente
-   BluetoothManager: ✓ Mensaje ENVIADO: BOARD_SYNC
-   GameViewModel: >>> Enviando GAME_STATE_UPDATE
-   BluetoothManager: ✓ Mensaje ENVIADO: GAME_STATE_UPDATE
-   ```
+```
+GameViewModel: 🎯 PRIMER MOVIMIENTO en (5, 5)
+GameViewModel: 📤 HOST enviando BOARD_SYNC (234 chars)
+BluetoothManager: ✓ Mensaje ENVIADO: BOARD_SYNC (234 caracteres)
+GameViewModel: 📤 Enviando GAME_STATE_UPDATE
+GameViewModel:    Turno → 2
+GameViewModel:    P1: 10pts, P2: 0pts
+GameViewModel:    Reveladas: 12 celdas
+BluetoothManager: ✓ Mensaje ENVIADO: GAME_STATE_UPDATE (567 caracteres)
+GameViewModel: ✅ GAME_STATE_UPDATE enviado (567 chars)
+```
 
-2. **Jugador 2 recibe:**
-   ```
-   BluetoothManager: ✓ Mensaje RECIBIDO: BOARD_SYNC
-   GameViewModel: >>> CLIENTE recibió BOARD_SYNC
-   GameViewModel: >>> Tablero sincronizado exitosamente
-   BluetoothManager: ✓ Mensaje RECIBIDO: GAME_STATE_UPDATE
-   GameViewModel: >>> Recibido GAME_STATE_UPDATE
-   GameViewModel: >>> Celdas reveladas en el estado: [número]
-   GameViewModel: >>> ACTUALIZACIÓN COMPLETA
-   ```
+### 2️⃣ Jugador 2 (Cliente) recibe mensajes:
 
-## Problemas Comunes y Soluciones
+```
+BluetoothManager: ✓ Mensaje RECIBIDO: BOARD_SYNC (234 caracteres)
+GameViewModel: 🔔 Nuevo mensaje en el flow: BOARD_SYNC
+GameViewModel: 🔷 Procesando mensaje: BOARD_SYNC
+GameViewModel: >>> CLIENTE recibió BOARD_SYNC
+GameViewModel: >>> ✅ Tablero sincronizado - 10x10
+GameViewModel: >>> Cliente listo. Turno=2
 
-### Problema 1: No se reciben mensajes
-**Síntomas:** Solo ves "ENVIADO" pero nunca "RECIBIDO"
+BluetoothManager: ✓ Mensaje RECIBIDO: GAME_STATE_UPDATE (567 caracteres)
+GameViewModel: 🔔 Nuevo mensaje en el flow: GAME_STATE_UPDATE
+GameViewModel: 🔷 Procesando mensaje: GAME_STATE_UPDATE
+GameViewModel: >>> Procesando GAME_STATE_UPDATE (isHost=false)
+GameViewModel: >>> Estado recibido - Turno: 2, P1: 10, P2: 0
+GameViewModel: >>> Aplicando estado - 12 celdas reveladas
+GameViewModel: >>> ✅ Estado actualizado exitosamente
+```
+
+### 3️⃣ Ahora es el turno del Jugador 2:
+
+El Jugador 2 debería poder hacer click en cualquier celda porque:
+- `boardSynced = true`
+- `currentPlayer = 2`
+- `isHost = false`
+- La condición `!isHost && currentPlayer == 2` es `true`
+
+## 🐛 Problemas Comunes
+
+### ❌ Problema: "No es tu turno"
+**Log esperado:**
+```
+GameViewModel: onCellClick(row=3, col=4) - isHost=false, currentPlayer=2, isMyTurn=true, boardSynced=true
+```
+
+**Si ves:**
+```
+GameViewModel: No es tu turno. Esperando al oponente.
+```
 
 **Verificar:**
-- Estado de conexión Bluetooth
-- Logs: `✗ NO CONECTADO, estado: [estado]`
+1. ¿El mensaje GAME_STATE_UPDATE llegó?
+2. ¿El turno se cambió correctamente? Debe ser `currentPlayer=2`
+3. ¿El `isHost` es correcto? Debe ser `false` para el cliente
+
+### ❌ Problema: No se reciben mensajes
+**Verificar:**
+```
+BluetoothManager: ✗ NO CONECTADO, estado: DISCONNECTED
+```
 
 **Solución:**
-- Verificar que ambos dispositivos estén conectados
-- Reiniciar la conexión Bluetooth
+- Reconectar los dispositivos
+- Verificar que ambos tengan Bluetooth habilitado
+- Reiniciar la aplicación
 
-### Problema 2: Se reciben pero no se actualizan
-**Síntomas:** Ves "RECIBIDO" pero la UI no cambia
+### ❌ Problema: Se reciben pero no se actualizan
+**Verificar que aparezcan TODOS estos logs:**
+```
+🔔 Nuevo mensaje en el flow
+🔷 Procesando mensaje
+>>> ✅ Estado actualizado exitosamente
+```
 
-**Verificar:**
-- `>>> Celdas reveladas en el estado: [número]` debe ser > 0
-- `>>> Estado local actualizado completamente` debe aparecer
+**Si falta alguno:**
+- El flow no está funcionando → Revisar init
+- El mensaje no se está procesando → Revisar handleBluetoothMessage
+- El estado no se actualiza → Revisar StateFlow
 
-**Solución:**
-- Verificar que la deserialización funcione correctamente
-- Asegurarse de que el StateFlow se actualice
+## 🎮 Testing Checklist
 
-### Problema 3: Sincronización del tablero falla
-**Síntomas:** El cliente no puede hacer clicks
+Prueba esto en orden:
 
-**Verificar:**
-- `>>> boardSynced establecido a true` debe aparecer
-- `boardSynced=${_boardSynced.value}` debe ser `true`
+1. ✅ **Conexión Bluetooth**
+   - [ ] Ambos dispositivos conectados
+   - [ ] Log: Estado CONNECTED
 
-## Información Adicional en los Logs
+2. ✅ **Primer Movimiento (Host)**
+   - [ ] Jugador 1 hace click
+   - [ ] Log: 🎯 PRIMER MOVIMIENTO
+   - [ ] Log: 📤 HOST enviando BOARD_SYNC
+   - [ ] Log: ✓ Mensaje ENVIADO
 
-Los logs ahora incluyen:
-- Número de caracteres en los mensajes
-- Cantidad de celdas reveladas
-- Estado del turno después de cada acción
-- Puntos de ambos jugadores
-- Estado de sincronización del tablero
+3. ✅ **Recepción (Cliente)**
+   - [ ] Log: ✓ Mensaje RECIBIDO: BOARD_SYNC
+   - [ ] Log: 🔔 Nuevo mensaje en el flow
+   - [ ] Log: >>> ✅ Tablero sincronizado
 
-## Si el Problema Persiste
+4. ✅ **Estado del Juego (Cliente)**
+   - [ ] Log: ✓ Mensaje RECIBIDO: GAME_STATE_UPDATE
+   - [ ] Log: >>> Aplicando estado - X celdas reveladas (X > 0)
+   - [ ] Log: >>> ✅ Estado actualizado exitosamente
 
-Revisa estos puntos en orden:
+5. ✅ **UI Actualizada (Cliente)**
+   - [ ] El tablero muestra las celdas reveladas
+   - [ ] Los puntos del Jugador 1 se actualizaron
+   - [ ] El turno cambió a Jugador 2
 
-1. ✅ Conexión Bluetooth establecida (CONNECTED)
-2. ✅ Mensajes se ENVÍAN correctamente
-3. ✅ Mensajes se RECIBEN correctamente
-4. ✅ Mensajes se DESERIALIZAN correctamente
-5. ✅ Estado se ACTUALIZA en el ViewModel
-6. ✅ UI se RECOMPONE con el nuevo estado
+6. ✅ **Jugador 2 puede jugar**
+   - [ ] Click funciona
+   - [ ] Log: isMyTurn=true
+   - [ ] Celdas se revelan
 
-El problema estará en el paso donde falte el ✅
+## 🔍 Debug Avanzado
+
+Si todo lo anterior funciona pero la UI no se actualiza:
+
+1. **Verificar que collectAsState() esté configurado:**
+   ```kotlin
+   val gameState by viewModel.gameState.collectAsState()
+   ```
+
+2. **Verificar que GameBoard use el estado:**
+   ```kotlin
+   GameBoard(
+       board = gameState.board,  // ← Debe ser del estado
+       ...
+   )
+   ```
+
+3. **Forzar recomposición:**
+   - Agregar un `key(gameState.board.hashCode())` alrededor de GameBoard
+
+## 📝 Logs Importantes
+
+Guarda estos logs si el problema persiste:
+- Todos los logs desde que se conectan hasta el primer click del Jugador 2
+- Incluir logs de ambos dispositivos
+- Filtrar por: `tag:GameViewModel|tag:BluetoothManager`
