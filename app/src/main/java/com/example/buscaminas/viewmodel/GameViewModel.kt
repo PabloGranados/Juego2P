@@ -17,6 +17,7 @@ import com.example.buscaminas.model.GameStatistics
 import com.example.buscaminas.model.GameStatus
 import com.example.buscaminas.model.Player
 import com.example.buscaminas.model.PlayerStatistics
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -196,20 +197,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             
             // Si es el primer movimiento, generar las minas y guardar tiempo de inicio
             if (workingState.isFirstMove) {
+                Log.d("GameViewModel", ">>> PRIMER MOVIMIENTO - Generando minas en (row=$row, col=$col)")
+                
                 // Generar minas (la función ya limpia las minas existentes)
                 board.generateMines(row, col)
-                
-                // Si es el host en modo Bluetooth, enviar el tablero al cliente
-                if (_isBluetoothMode.value && bluetoothManager.isHost.value && 
-                    connectionState.value == ConnectionState.CONNECTED) {
-                    Log.d("GameViewModel", "Host enviando BOARD_SYNC al cliente después del primer movimiento")
-                    val boardData = serializeBoardMines()
-                    bluetoothManager.sendMessage(
-                        BluetoothMessage(MessageType.BOARD_SYNC, boardData)
-                    )
-                    // Pequeña pausa para asegurar que el mensaje llegue
-                    delay(100)
-                }
                 
                 // Guardar tiempo de inicio y resetear contadores
                 repository.saveGameStartTime()
@@ -228,6 +219,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 
                 // Iniciar el temporizador
                 startTimer()
+                
+                // Si es el host en modo Bluetooth, enviar el tablero al cliente ANTES de revelar
+                if (_isBluetoothMode.value && bluetoothManager.isHost.value && 
+                    connectionState.value == ConnectionState.CONNECTED) {
+                    Log.d("GameViewModel", ">>> HOST enviando BOARD_SYNC al cliente")
+                    val boardData = serializeBoardMines()
+                    Log.d("GameViewModel", ">>> BoardData: $boardData")
+                    bluetoothManager.sendMessage(
+                        BluetoothMessage(MessageType.BOARD_SYNC, boardData)
+                    )
+                    // Esperar a que el mensaje se envíe
+                    delay(200)
+                    Log.d("GameViewModel", ">>> BOARD_SYNC enviado, continuando...")
+                }
                 
                 // Pequeña pausa para asegurar que todo esté sincronizado
                 delay(50)
@@ -324,12 +329,28 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     
                     // IMPORTANTE: Enviar el estado completo actualizado al oponente DESPUÉS de cambiar el turno
                     if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
-                        Log.d("GameViewModel", "Enviando estado después de revelar celdas: turno=${_gameState.value.currentPlayer}, " +
-                                "P1=${_gameState.value.player1.points}pts, P2=${_gameState.value.player2.points}pts")
+                        val currentBoardState = _gameState.value.board
+                        var revealedInState = 0
+                        currentBoardState.forEach { row ->
+                            row.forEach { cell ->
+                                if (cell.isRevealed) revealedInState++
+                            }
+                        }
+                        
+                        Log.d("GameViewModel", ">>> Enviando GAME_STATE_UPDATE después de revelar celdas")
+                        Log.d("GameViewModel", "    - Turno ahora: ${_gameState.value.currentPlayer}")
+                        Log.d("GameViewModel", "    - P1: ${_gameState.value.player1.points}pts, P2: ${_gameState.value.player2.points}pts")
+                        Log.d("GameViewModel", "    - Celdas reveladas en este turno: ${revealedCells.size}")
+                        Log.d("GameViewModel", "    - Total celdas reveladas en el estado: $revealedInState")
+                        
                         val stateData = serializeGameState(_gameState.value)
+                        Log.d("GameViewModel", ">>> StateData length: ${stateData.length}")
+                        
                         bluetoothManager.sendMessage(
                             BluetoothMessage(MessageType.GAME_STATE_UPDATE, stateData)
                         )
+                        
+                        Log.d("GameViewModel", ">>> GAME_STATE_UPDATE enviado exitosamente")
                     }
                 }
             }
@@ -882,12 +903,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      * Maneja mensajes recibidos por Bluetooth
      */
     private fun handleBluetoothMessage(message: BluetoothMessage) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Main) {  // IMPORTANTE: Ejecutar en Main thread
             when (message.type) {
                 MessageType.BOARD_SYNC -> {
                     // Solo el cliente debe procesar este mensaje
                     if (!bluetoothManager.isHost.value) {
-                        Log.d("GameViewModel", "Recibido BOARD_SYNC, sincronizando tablero en cliente")
+                        Log.d("GameViewModel", ">>> CLIENTE recibió BOARD_SYNC")
+                        Log.d("GameViewModel", ">>> Data recibida: ${message.data}")
+                        
                         deserializeBoardMines(message.data)
                         _boardSynced.value = true
                         
@@ -899,6 +922,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         _gameState.value = updatedState
                         
+                        Log.d("GameViewModel", ">>> Tablero del cliente actualizado - isFirstMove ahora: ${updatedState.isFirstMove}")
+                        
                         // Guardar el estado
                         repository.saveCurrentGameToPreferences(updatedState)
                         
@@ -909,15 +934,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             startTimer()
                         }
                         
-                        Log.d("GameViewModel", "Tablero sincronizado exitosamente. Cliente listo para jugar. Turno=${updatedState.currentPlayer}")
+                        Log.d("GameViewModel", ">>> Tablero sincronizado exitosamente. Cliente listo. Turno=${updatedState.currentPlayer}")
+                    } else {
+                        Log.d("GameViewModel", ">>> HOST recibió BOARD_SYNC (ignorando - solo para cliente)")
                     }
                 }
                 MessageType.GAME_STATE_UPDATE -> {
+                    Log.d("GameViewModel", ">>> Recibido GAME_STATE_UPDATE")
+                    Log.d("GameViewModel", ">>> isHost: ${bluetoothManager.isHost.value}")
+                    
                     // Aplicar el estado completo recibido del oponente directamente
                     deserializeGameState(message.data)?.let { receivedState ->
-                        Log.d("GameViewModel", "Recibido GAME_STATE_UPDATE: Jugador actual=${receivedState.currentPlayer}, " +
-                                "P1=${receivedState.player1.points}pts, P2=${receivedState.player2.points}pts, " +
-                                "isFirstMove=${receivedState.isFirstMove}")
+                        Log.d("GameViewModel", ">>> Estado deserializado:")
+                        Log.d("GameViewModel", "    - Jugador actual: ${receivedState.currentPlayer}")
+                        Log.d("GameViewModel", "    - P1: ${receivedState.player1.points}pts")
+                        Log.d("GameViewModel", "    - P2: ${receivedState.player2.points}pts")
+                        Log.d("GameViewModel", "    - isFirstMove: ${receivedState.isFirstMove}")
                         
                         // IMPORTANTE: Recrear el tablero interno completamente con el estado recibido
                         board = Board(boardRows, boardCols, minesCount)
@@ -928,18 +960,35 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         // Asegurar que el tablero esté sincronizado si no es el primer movimiento
                         if (!receivedState.isFirstMove && !bluetoothManager.isHost.value) {
                             _boardSynced.value = true
+                            Log.d("GameViewModel", ">>> boardSynced establecido a true")
                         }
                         
                         // Aplicar el estado completo recibido con el tablero actualizado
-                        _gameState.value = receivedState.copy(
+                        val finalState = receivedState.copy(
                             board = board.getBoard()
                         )
                         
-                        // Guardar el estado sincronizado
-                        repository.saveCurrentGameToPreferences(_gameState.value)
+                        // IMPORTANTE: Forzar actualización del StateFlow en el hilo principal
+                        _gameState.value = finalState
                         
-                        Log.d("GameViewModel", "Estado actualizado correctamente. Turno=${_gameState.value.currentPlayer}, " +
-                                "boardSynced=${_boardSynced.value}, esHost=${bluetoothManager.isHost.value}")
+                        Log.d("GameViewModel", ">>> Estado local actualizado completamente")
+                        Log.d("GameViewModel", ">>> Verificando tablero: ${finalState.board.size}x${finalState.board.firstOrNull()?.size ?: 0}")
+                        
+                        // Contar celdas reveladas para verificar
+                        var revealedCount = 0
+                        finalState.board.forEach { row ->
+                            row.forEach { cell ->
+                                if (cell.isRevealed) revealedCount++
+                            }
+                        }
+                        Log.d("GameViewModel", ">>> Celdas reveladas en el estado: $revealedCount")
+                        
+                        // Guardar el estado sincronizado
+                        repository.saveCurrentGameToPreferences(finalState)
+                        
+                        Log.d("GameViewModel", ">>> ACTUALIZACIÓN COMPLETA - Turno=${_gameState.value.currentPlayer}, boardSynced=${_boardSynced.value}")
+                    } ?: run {
+                        Log.e("GameViewModel", ">>> ERROR: No se pudo deserializar el estado recibido")
                     }
                 }
                 MessageType.CELL_CLICK -> {

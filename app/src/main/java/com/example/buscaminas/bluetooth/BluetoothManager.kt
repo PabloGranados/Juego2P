@@ -305,11 +305,15 @@ class BluetoothManager(private val context: Context) {
             if (parts.size >= 2) {
                 val type = MessageType.valueOf(parts[0])
                 val data = parts[1]
+                
+                Log.d(TAG, "✓ Mensaje RECIBIDO: $type (${data.length} caracteres)")
+                
                 _receivedMessage.value = BluetoothMessage(type, data)
-                Log.d(TAG, "Mensaje recibido: $type - $data")
+            } else {
+                Log.w(TAG, "✗ Mensaje inválido - partes: ${parts.size}")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error parseando mensaje", e)
+            Log.e(TAG, "✗ ERROR parseando mensaje: ${message.take(100)}...", e)
         }
     }
     
@@ -322,12 +326,12 @@ class BluetoothManager(private val context: Context) {
                 val data = "${message.type}|${message.data}$MESSAGE_DELIMITER"
                 outputStream?.write(data.toByteArray())
                 outputStream?.flush()
-                Log.d(TAG, "Mensaje enviado: ${message.type} - ${message.data}")
+                Log.d(TAG, "✓ Mensaje ENVIADO: ${message.type} (${message.data.length} caracteres)")
             } else {
-                Log.w(TAG, "No conectado, no se puede enviar mensaje")
+                Log.w(TAG, "✗ NO CONECTADO, estado: ${_connectionState.value} - No se puede enviar mensaje ${message.type}")
             }
         } catch (e: IOException) {
-            Log.e(TAG, "Error enviando mensaje", e)
+            Log.e(TAG, "✗ ERROR enviando mensaje ${message.type}", e)
             disconnect()
         }
     }
