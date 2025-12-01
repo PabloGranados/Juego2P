@@ -169,17 +169,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             val isMyTurn = (bluetoothManager.isHost.value && currentState.currentPlayer == 1) ||
                           (!bluetoothManager.isHost.value && currentState.currentPlayer == 2)
             
-            Log.d("GameViewModel", "onCellClick - isHost=${bluetoothManager.isHost.value}, " +
-                    "currentPlayer=${currentState.currentPlayer}, isMyTurn=$isMyTurn")
+            Log.d("GameViewModel", "onCellClick(row=$row, col=$col) - isHost=${bluetoothManager.isHost.value}, " +
+                    "currentPlayer=${currentState.currentPlayer}, isMyTurn=$isMyTurn, boardSynced=${_boardSynced.value}")
             
             if (!isMyTurn) {
                 Log.w("GameViewModel", "No es tu turno. Esperando al oponente.")
                 return
             }
             
-            // Si es el cliente y el tablero no está sincronizado, no permitir movimientos
-            if (!bluetoothManager.isHost.value && !_boardSynced.value) {
-                Log.w("GameViewModel", "Tablero aún no sincronizado en el cliente")
+            // Si es el cliente y el tablero no está sincronizado Y es el primer movimiento, no permitir
+            if (!bluetoothManager.isHost.value && !_boardSynced.value && currentState.isFirstMove) {
+                Log.w("GameViewModel", "Tablero aún no sincronizado en el cliente (primer movimiento)")
                 return
             }
         }
@@ -207,6 +207,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     bluetoothManager.sendMessage(
                         BluetoothMessage(MessageType.BOARD_SYNC, boardData)
                     )
+                    // Pequeña pausa para asegurar que el mensaje llegue
+                    delay(100)
                 }
                 
                 // Guardar tiempo de inicio y resetear contadores
@@ -891,42 +893,53 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         
                         // Actualizar el estado con el tablero sincronizado
                         val currentState = _gameState.value
-                        _gameState.value = currentState.copy(
+                        val updatedState = currentState.copy(
                             board = board.getBoard(),
                             isFirstMove = false
                         )
+                        _gameState.value = updatedState
                         
                         // Guardar el estado
-                        repository.saveCurrentGameToPreferences(_gameState.value)
+                        repository.saveCurrentGameToPreferences(updatedState)
                         
-                        // Iniciar el temporizador
-                        repository.saveGameStartTime()
-                        startTimer()
+                        // Iniciar el temporizador solo si no se ha iniciado
+                        val startTime = repository.getGameStartTime()
+                        if (startTime <= 0) {
+                            repository.saveGameStartTime()
+                            startTimer()
+                        }
                         
-                        Log.d("GameViewModel", "Tablero sincronizado exitosamente. Cliente listo para jugar.")
+                        Log.d("GameViewModel", "Tablero sincronizado exitosamente. Cliente listo para jugar. Turno=${updatedState.currentPlayer}")
                     }
                 }
                 MessageType.GAME_STATE_UPDATE -> {
                     // Aplicar el estado completo recibido del oponente directamente
                     deserializeGameState(message.data)?.let { receivedState ->
                         Log.d("GameViewModel", "Recibido GAME_STATE_UPDATE: Jugador actual=${receivedState.currentPlayer}, " +
-                                "P1=${receivedState.player1.points}pts, P2=${receivedState.player2.points}pts")
+                                "P1=${receivedState.player1.points}pts, P2=${receivedState.player2.points}pts, " +
+                                "isFirstMove=${receivedState.isFirstMove}")
                         
-                        // Actualizar el tablero interno completamente
+                        // IMPORTANTE: Recrear el tablero interno completamente con el estado recibido
                         board = Board(boardRows, boardCols, minesCount)
-                        receivedState.board.forEachIndexed { rowIndex, row ->
-                            row.forEachIndexed { colIndex, cell ->
-                                board.setCellState(rowIndex, colIndex, cell)
-                            }
+                        
+                        // Restaurar el tablero completo desde el estado recibido
+                        board.restoreBoard(receivedState.board)
+                        
+                        // Asegurar que el tablero esté sincronizado si no es el primer movimiento
+                        if (!receivedState.isFirstMove && !bluetoothManager.isHost.value) {
+                            _boardSynced.value = true
                         }
                         
-                        // Aplicar el estado completo recibido
-                        _gameState.value = receivedState
+                        // Aplicar el estado completo recibido con el tablero actualizado
+                        _gameState.value = receivedState.copy(
+                            board = board.getBoard()
+                        )
                         
                         // Guardar el estado sincronizado
-                        repository.saveCurrentGameToPreferences(receivedState)
+                        repository.saveCurrentGameToPreferences(_gameState.value)
                         
-                        Log.d("GameViewModel", "Estado actualizado correctamente en dispositivo receptor")
+                        Log.d("GameViewModel", "Estado actualizado correctamente. Turno=${_gameState.value.currentPlayer}, " +
+                                "boardSynced=${_boardSynced.value}, esHost=${bluetoothManager.isHost.value}")
                     }
                 }
                 MessageType.CELL_CLICK -> {
