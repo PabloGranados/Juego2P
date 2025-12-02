@@ -93,12 +93,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         // Cargar estadísticas al iniciar
         loadStatistics()
         
-        // Observar mensajes Bluetooth - IMPORTANTE: usar Main dispatcher
+        // Observar mensajes Bluetooth - procesamiento directo en Main
         viewModelScope.launch(Dispatchers.Main) {
             bluetoothManager.receivedMessage.collect { message ->
                 message?.let { 
-                    Log.d("GameViewModel", "🔔 Nuevo mensaje en el flow: ${it.type}")
-                    handleBluetoothMessage(it) 
+                    Log.d("GameViewModel", "🔔 [${System.currentTimeMillis()}] Mensaje recibido: ${it.type}")
+                    // Procesar directamente sin lanzar otra coroutine
+                    processBluetoothMessage(it) 
+                    // Limpiar mensaje procesado
+                    bluetoothManager.clearReceivedMessage()
                 }
             }
         }
@@ -216,23 +219,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 // Iniciar el temporizador
                 startTimer()
                 
-                // Si es el host en modo Bluetooth, enviar el tablero al cliente INMEDIATAMENTE
-                if (_isBluetoothMode.value && bluetoothManager.isHost.value && 
-                    connectionState.value == ConnectionState.CONNECTED) {
-                    
-                    val boardData = serializeBoardMines()
-                    Log.d("GameViewModel", "📤 HOST enviando BOARD_SYNC (${boardData.length} chars)")
-                    
-                    withContext(Dispatchers.IO) {
-                        bluetoothManager.sendMessage(
-                            BluetoothMessage(MessageType.BOARD_SYNC, boardData)
-                        )
-                    }
-                    
-                    // Esperar a que el mensaje llegue al cliente
-                    delay(500)
-                    Log.d("GameViewModel", "⏳ Esperado 500ms para que BOARD_SYNC llegue al cliente")
-                }
+                Log.d("GameViewModel", "✅ Primer movimiento procesado, continuando a revelar celda...")
+                // Ya NO enviamos BOARD_SYNC aquí - el estado completo se enviará después de revelar
             }
             
             // Revelar la celda usando el estado actualizado
@@ -281,11 +269,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     // PRIMERO enviar el estado al oponente, LUEGO cambiar localmente
                     if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
-                        // Enviar estado ANTES de cambiar turno
                         val stateBeforeTurn = newState.switchTurn()
+                        val timestamp = System.currentTimeMillis()
                         val stateData = serializeGameState(stateBeforeTurn)
                         
-                        Log.d("GameViewModel", "📤 Enviando estado después de pisar mina → Turno ${stateBeforeTurn.currentPlayer}")
+                        Log.d("GameViewModel", "📤 [$timestamp] Enviando GAME_STATE_UPDATE (pisar mina)")
+                        Log.d("GameViewModel", "   Turno: ${stateBeforeTurn.currentPlayer}, P1: ${stateBeforeTurn.player1.points}pts, P2: ${stateBeforeTurn.player2.points}pts")
+                        Log.d("GameViewModel", "   Tamaño mensaje: ${stateData.length} chars")
                         
                         withContext(Dispatchers.IO) {
                             bluetoothManager.sendMessage(
@@ -293,13 +283,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         
-                        // Pequeño delay para que el mensaje salga
+                        Log.d("GameViewModel", "✅ [$timestamp] GAME_STATE_UPDATE enviado")
                         delay(100)
                         
-                        // Ahora actualizar localmente
                         _gameState.value = stateBeforeTurn
+                        Log.d("GameViewModel", "✅ [$timestamp] Estado local actualizado")
                     } else {
-                        // Modo local: solo cambiar turno
                         _gameState.value = newState.switchTurn()
                     }
                 }
@@ -344,12 +333,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             row.forEach { cell -> if (cell.isRevealed) totalRevealed++ }
                         }
                         
-                        Log.d("GameViewModel", "📤 Enviando GAME_STATE_UPDATE")
-                        Log.d("GameViewModel", "   Turno → ${stateAfterTurnChange.currentPlayer}")
-                        Log.d("GameViewModel", "   P1: ${stateAfterTurnChange.player1.points}pts, P2: ${stateAfterTurnChange.player2.points}pts")
-                        Log.d("GameViewModel", "   Reveladas: $totalRevealed celdas")
-                        
+                        val timestamp = System.currentTimeMillis()
                         val stateData = serializeGameState(stateAfterTurnChange)
+                        
+                        Log.d("GameViewModel", "📤 [$timestamp] Enviando GAME_STATE_UPDATE (revelar celdas)")
+                        Log.d("GameViewModel", "   Turno: ${stateAfterTurnChange.currentPlayer}, P1: ${stateAfterTurnChange.player1.points}pts, P2: ${stateAfterTurnChange.player2.points}pts")
+                        Log.d("GameViewModel", "   Reveladas: $totalRevealed, isFirstMove: ${stateAfterTurnChange.isFirstMove}")
+                        Log.d("GameViewModel", "   Tamaño mensaje: ${stateData.length} chars")
                         
                         withContext(Dispatchers.IO) {
                             bluetoothManager.sendMessage(
@@ -357,13 +347,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         
-                        Log.d("GameViewModel", "✅ GAME_STATE_UPDATE enviado (${stateData.length} chars)")
+                        Log.d("GameViewModel", "✅ [$timestamp] GAME_STATE_UPDATE enviado")
                         
                         // Pequeño delay para que el mensaje salga
                         delay(100)
                         
                         // Ahora actualizar localmente
                         _gameState.value = stateAfterTurnChange
+                        Log.d("GameViewModel", "✅ [$timestamp] Estado local actualizado")
                     } else {
                         // Modo local: solo cambiar turno
                         _gameState.value = newState.switchTurn()
@@ -440,9 +431,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 // PRIMERO enviar, LUEGO cambiar turno localmente
                 if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
                     val stateAfterTurnChange = newState.switchTurn()
+                    val timestamp = System.currentTimeMillis()
                     val stateData = serializeGameState(stateAfterTurnChange)
                     
-                    Log.d("GameViewModel", "📤 Enviando estado después de colocar bandera → Turno ${stateAfterTurnChange.currentPlayer}")
+                    Log.d("GameViewModel", "📤 [$timestamp] Enviando GAME_STATE_UPDATE (colocar bandera)")
+                    Log.d("GameViewModel", "   Turno: ${stateAfterTurnChange.currentPlayer}, Banderas: ${stateAfterTurnChange.placedFlags}")
+                    Log.d("GameViewModel", "   Tamaño mensaje: ${stateData.length} chars")
                     
                     withContext(Dispatchers.IO) {
                         bluetoothManager.sendMessage(
@@ -450,13 +444,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     
-                    // Pequeño delay
+                    Log.d("GameViewModel", "✅ [$timestamp] GAME_STATE_UPDATE enviado")
                     delay(100)
                     
-                    // Ahora cambiar turno localmente
                     _gameState.value = stateAfterTurnChange
+                    Log.d("GameViewModel", "✅ [$timestamp] Estado local actualizado")
                 } else {
-                    // Modo local
                     _gameState.value = newState.switchTurn()
                 }
             } else {
@@ -471,9 +464,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 
                 // Enviar estado antes de actualizar localmente
                 if (_isBluetoothMode.value && connectionState.value == ConnectionState.CONNECTED) {
+                    val timestamp = System.currentTimeMillis()
                     val stateData = serializeGameState(updatedState)
                     
-                    Log.d("GameViewModel", "📤 Enviando estado después de quitar bandera")
+                    Log.d("GameViewModel", "📤 [$timestamp] Enviando GAME_STATE_UPDATE (quitar bandera)")
+                    Log.d("GameViewModel", "   Banderas: ${updatedState.placedFlags}")
+                    Log.d("GameViewModel", "   Tamaño mensaje: ${stateData.length} chars")
                     
                     withContext(Dispatchers.IO) {
                         bluetoothManager.sendMessage(
@@ -481,11 +477,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     
+                    Log.d("GameViewModel", "✅ [$timestamp] GAME_STATE_UPDATE enviado")
                     delay(100)
                 }
                 
                 // Actualizar localmente
                 _gameState.value = updatedState
+                Log.d("GameViewModel", "✅ Estado local actualizado (bandera quitada)")
             }
         }
     }
@@ -953,114 +951,89 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     /**
-     * Maneja mensajes recibidos por Bluetooth
+     * Procesa mensajes recibidos por Bluetooth (ya estamos en Main dispatcher)
      */
-    private fun handleBluetoothMessage(message: BluetoothMessage) {
-        // Ya estamos en Main dispatcher desde el init
-        viewModelScope.launch(Dispatchers.Main) {
-            Log.d("GameViewModel", "🔷 Procesando mensaje: ${message.type}")
-            
-            when (message.type) {
-                MessageType.BOARD_SYNC -> {
-                    // El cliente SIEMPRE debe procesar BOARD_SYNC del host
-                    if (!bluetoothManager.isHost.value) {
-                        Log.d("GameViewModel", "📥 CLIENTE recibió BOARD_SYNC")
+    private suspend fun processBluetoothMessage(message: BluetoothMessage) {
+        val timestamp = System.currentTimeMillis()
+        Log.d("GameViewModel", "🔷 [$timestamp] Procesando: ${message.type}")
+        
+        when (message.type) {
+            MessageType.GAME_STATE_UPDATE -> {
+                Log.d("GameViewModel", "📥 [$timestamp] GAME_STATE_UPDATE recibido (isHost=${bluetoothManager.isHost.value})")
+                
+                try {
+                    deserializeGameState(message.data)?.let { receivedState ->
+                        Log.d("GameViewModel", "   [$timestamp] Deserializado: Turno=${receivedState.currentPlayer}, P1=${receivedState.player1.points}pts, P2=${receivedState.player2.points}pts, isFirstMove=${receivedState.isFirstMove}")
                         
-                        try {
-                            deserializeBoardMines(message.data)
-                            
-                            // Actualizar el estado con el tablero sincronizado
-                            val currentState = _gameState.value
-                            val updatedState = currentState.copy(
-                                board = board.getBoard(),
-                                isFirstMove = false
-                            )
-                            
+                        // Recrear el tablero interno completamente
+                        board = Board(boardRows, boardCols, minesCount)
+                        board.restoreBoard(receivedState.board)
+                        
+                        // Marcar como sincronizado
+                        if (!receivedState.isFirstMove) {
                             _boardSynced.value = true
-                            _gameState.value = updatedState
-                            
-                            Log.d("GameViewModel", "✅ Tablero sincronizado - ${updatedState.board.size}x${updatedState.board[0].size}")
-                            
-                            // Guardar el estado
-                            repository.saveCurrentGameToPreferences(updatedState)
-                            
-                            // Iniciar el temporizador solo si no se ha iniciado
-                            val startTime = repository.getGameStartTime()
-                            if (startTime <= 0) {
-                                repository.saveGameStartTime()
+                        }
+                        
+                        // Si es el cliente y recibe el primer estado, iniciar temporizador
+                        if (!bluetoothManager.isHost.value && !receivedState.isFirstMove) {
+                            val currentTimer = repository.getGameStartTime()
+                            if (currentTimer <= 0) {
+                                Log.d("GameViewModel", "⏰ [$timestamp] CLIENTE iniciando temporizador (sincronizado con HOST)")
                                 startTimer()
                             }
-                            
-                            Log.d("GameViewModel", "✅ Cliente listo. Turno=${updatedState.currentPlayer}")
-                        } catch (e: Exception) {
-                            Log.e("GameViewModel", "❌ Error procesando BOARD_SYNC", e)
                         }
-                    } else {
-                        Log.d("GameViewModel", "⚠️ HOST recibió BOARD_SYNC (ignorado)")
+                        
+                        // Crear el estado final con el tablero restaurado
+                        val finalState = receivedState.copy(board = board.getBoard())
+                        
+                        // Contar celdas reveladas para logging
+                        var revealed = 0
+                        finalState.board.forEach { row -> row.forEach { if (it.isRevealed) revealed++ } }
+                        
+                        Log.d("GameViewModel", "   [$timestamp] Aplicando: ${revealed} celdas reveladas, turno=${finalState.currentPlayer}")
+                        
+                        // FORZAR actualización del StateFlow
+                        _gameState.value = finalState
+                        
+                        // Guardar
+                        repository.saveCurrentGameToPreferences(finalState)
+                        
+                        Log.d("GameViewModel", "✅ [$timestamp] Estado actualizado exitosamente")
+                    } ?: run {
+                        Log.e("GameViewModel", "❌ [$timestamp] No se pudo deserializar el estado")
                     }
-                }
-                
-                MessageType.GAME_STATE_UPDATE -> {
-                    Log.d("GameViewModel", "📥 Procesando GAME_STATE_UPDATE (isHost=${bluetoothManager.isHost.value})")
-                    
-                    try {
-                        deserializeGameState(message.data)?.let { receivedState ->
-                            Log.d("GameViewModel", "   Estado recibido - Turno: ${receivedState.currentPlayer}, P1: ${receivedState.player1.points}, P2: ${receivedState.player2.points}")
-                            
-                            // Recrear el tablero interno completamente
-                            board = Board(boardRows, boardCols, minesCount)
-                            board.restoreBoard(receivedState.board)
-                            
-                            // Marcar como sincronizado si no es el primer movimiento
-                            if (!receivedState.isFirstMove && !bluetoothManager.isHost.value) {
-                                _boardSynced.value = true
-                            }
-                            
-                            // Crear el estado final con el tablero restaurado
-                            val finalState = receivedState.copy(board = board.getBoard())
-                            
-                            // Contar celdas reveladas para logging
-                            var revealed = 0
-                            finalState.board.forEach { row -> row.forEach { if (it.isRevealed) revealed++ } }
-                            
-                            Log.d("GameViewModel", "   Aplicando estado - ${revealed} celdas reveladas")
-                            
-                            // FORZAR actualización del StateFlow
-                            _gameState.value = finalState
-                            
-                            // Guardar
-                            repository.saveCurrentGameToPreferences(finalState)
-                            
-                            Log.d("GameViewModel", "✅ Estado actualizado exitosamente")
-                        } ?: run {
-                            Log.e("GameViewModel", "❌ Error: No se pudo deserializar el estado")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("GameViewModel", "❌ Error procesando GAME_STATE_UPDATE", e)
-                    }
-                }
-                
-                MessageType.CELL_CLICK -> {
-                    // DEPRECATED
-                }
-                MessageType.CELL_LONG_CLICK -> {
-                    // DEPRECATED
-                }
-                MessageType.RESET_GAME -> {
-                    Log.d("GameViewModel", "📥 Recibido RESET_GAME del oponente")
-                    // Resetear el juego localmente sin enviar mensaje de vuelta
-                    resetGameLocal()
-                }
-                MessageType.GAME_STATE -> {
-                    // Opcional
-                }
-                MessageType.PLAYER_INFO -> {
-                    // Opcional
+                } catch (e: Exception) {
+                    Log.e("GameViewModel", "❌ [$timestamp] Error procesando GAME_STATE_UPDATE", e)
                 }
             }
             
-            // Limpiar mensaje procesado
-            bluetoothManager.clearReceivedMessage()
+            MessageType.BOARD_SYNC -> {
+                // DEPRECATED - Ya no se usa, todo se maneja con GAME_STATE_UPDATE
+                Log.w("GameViewModel", "⚠️ [$timestamp] BOARD_SYNC recibido (DEPRECATED, ignorado)")
+            }
+            
+            MessageType.CELL_CLICK -> {
+                // DEPRECATED
+                Log.w("GameViewModel", "⚠️ [$timestamp] CELL_CLICK recibido (DEPRECATED, ignorado)")
+            }
+            
+            MessageType.CELL_LONG_CLICK -> {
+                // DEPRECATED
+                Log.w("GameViewModel", "⚠️ [$timestamp] CELL_LONG_CLICK recibido (DEPRECATED, ignorado)")
+            }
+            
+            MessageType.RESET_GAME -> {
+                Log.d("GameViewModel", "📥 [$timestamp] RESET_GAME del oponente")
+                resetGameLocal()
+            }
+            
+            MessageType.GAME_STATE -> {
+                // Opcional - no implementado
+            }
+            
+            MessageType.PLAYER_INFO -> {
+                // Opcional - no implementado
+            }
         }
     }
     
@@ -1453,6 +1426,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }.joinToString("|")
         }.joinToString(";")
         
+        // Obtener el timestamp actual del juego para sincronizarlo
+        val gameStartTime = repository.getGameStartTime()
+        
         return listOf(
             boardData,
             "${state.player1.name}:${state.player1.points}:${state.player1.wins}",
@@ -1463,7 +1439,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             state.totalFlags.toString(),
             state.placedFlags.toString(),
             state.isFirstMove.toInt().toString(),
-            state.lastRevealedBy.toString()
+            state.lastRevealedBy.toString(),
+            gameStartTime.toString()  // Agregar timestamp como parte 11
         ).joinToString("###")
     }
     
@@ -1473,7 +1450,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private fun deserializeGameState(data: String): GameState? {
         return try {
             val parts = data.split("###")
-            if (parts.size < 10) return null
+            if (parts.size < 10) {
+                Log.e("GameViewModel", "❌ Mensaje inválido: solo ${parts.size} partes (esperadas 11)")
+                return null
+            }
             
             // Parsear tablero
             val boardRows = parts[0].split(";").map { rowData ->
@@ -1512,6 +1492,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 color = Color(0xFFF44336)
             )
             
+            // Parsear y sincronizar timestamp si existe (parte 11)
+            if (parts.size >= 11) {
+                val receivedTimestamp = parts[10].toLongOrNull()
+                if (receivedTimestamp != null && receivedTimestamp > 0) {
+                    val currentTimestamp = repository.getGameStartTime()
+                    if (currentTimestamp != receivedTimestamp) {
+                        Log.d("GameViewModel", "⏰ Sincronizando timestamp: $currentTimestamp → $receivedTimestamp")
+                        repository.saveGameStartTime(receivedTimestamp)
+                    }
+                }
+            }
+            
             GameState(
                 board = boardRows,
                 player1 = player1,
@@ -1525,7 +1517,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 lastRevealedBy = parts[9].toIntOrNull() ?: 0
             )
         } catch (e: Exception) {
-            Log.e("GameViewModel", "Error deserializando estado del juego", e)
+            Log.e("GameViewModel", "❌ Error deserializando estado del juego", e)
             null
         }
     }

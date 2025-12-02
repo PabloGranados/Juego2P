@@ -301,7 +301,9 @@ class BluetoothManager(private val context: Context) {
      */
     private fun parseMessage(message: String) {
         try {
-            val parts = message.split("|")
+            // Usar split con límite 2 para dividir solo en el primer "|"
+            // Esto permite que el data contenga "|" sin problemas
+            val parts = message.split("|", limit = 2)
             if (parts.size >= 2) {
                 val type = MessageType.valueOf(parts[0])
                 val data = parts[1]
